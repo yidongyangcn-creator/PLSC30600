@@ -1,3 +1,4 @@
+% !Rnw weave = Sweave
 \documentclass[xcolor={dvipsnames}]{beamer}
 
 \usepackage{../assets/pres-template_MOW}
@@ -508,12 +509,18 @@ $$
 }
 
 %-------------------------------------------------------------------------------%
-\begin{frame}
+\begin{frame}{Randomization procedure}
 
 \begin{itemize}
-\item Because we know how treatment was assigned, we know all the possible ways treatment could be assigned across the villages, and the exact probability.\pause
-\item There are seven villages, and we say that exactly two will get treatment. Each village is assigned treatment with equal probability.
-
+\item Design: complete randomization with $N=7$ villages and exactly $n_1=2$ treated.\pause
+\item Each assignment vector $\bm{D}$ with $\sum_i D_i = 2$ is equally likely:
+\[
+\Pr(\bm{D}=\bm{d})=\frac{1}{\binom{7}{2}}=\frac{1}{21}.
+\]\pause
+\item The marginal assignment probability is the same for each village:
+\[
+\pi_i \equiv \Pr(D_i=1)=\frac{2}{7}.
+\]
 \end{itemize}
 
 \end{frame}
@@ -541,8 +548,8 @@ df <- data.frame(
         D = c(1, 0, 0, 0, 0, 0, 1),
         # our initial response vector
         Y = c(15, 15, 20, 20, 10, 15, 30),
-        # treatment assignment probability
-        probs = rep(2/7, 7)
+        # marginal assignment probability: pi_i = Pr(D_i = 1)
+        pi = rep(2/7, 7)
 )
 
 df
@@ -654,7 +661,7 @@ Ys_null <- list(
 
 dm <- gendist(Ys_null,
               perms, 
-              prob=df$probs)
+              prob=df$pi)
 dm
 @
 
