@@ -1,0 +1,311 @@
+---
+title: "PLSC 30600 --- Homework 3"
+output:
+  pdf_document:
+    number_sections: false
+header-includes:
+  - "\\usepackage[margin=1in]{geometry}"
+  - "\\usepackage{amsmath, amssymb, amsthm}"
+  - "\\usepackage{bm}"
+  - "\\usepackage{booktabs}"
+  - "\\usepackage{enumitem}"
+  - "\\usepackage{hyperref}"
+  - "\\usepackage{tikz}"
+  - "\\usetikzlibrary{positioning}"
+  - "\\setlist[itemize]{noitemsep, topsep=2pt}"
+  - "\\setlist[enumerate]{itemsep=4pt, topsep=6pt}"
+  - "\\newcommand{\\E}{\\textrm{E}}"
+  - "\\newcommand{\\Y}{\\bm{Y}}"
+  - "\\newcommand{\\D}{\\bm{D}}"
+  - "\\newcommand{\\one}{\\bm{\\mathbf{1}}}"
+  - "\\newcommand{\\X}{\\bm{X}}"
+  - "\\newcommand{\\Z}{\\bm{Z}}"
+  - "\\newcommand{\\W}{\\bm{W}}"
+---
+\textbf{Due:} Fri, February 27 (11:59pm)
+
+\vspace{0.75em}
+
+\noindent \textbf{General instructions}
+\begin{itemize}
+  \item \textbf{Show your work} for all hand calculations. A final numeric answer without intermediate steps, formulas, and/or justification is not sufficient.
+  \item For coding problems, submit a reproducible script \texttt{(.R/.rmd/.rnw)} along with the fully compiled pdf. Set a random seed and report it.
+  \item Include a brief note describing how you used AI tools (if at all), consistent with the course AI policy.
+\end{itemize}
+
+\vspace{0.75em}
+\hrule
+\vspace{0.75em}
+
+\section*{Problem 1: Binary IV and the LATE theorem}
+
+\noindent In this problem, you will work through the binary-instrument special case of the Imbens--Angrist LATE theorem.
+Throughout, assume \(Z_i\in\{0,1\}\), \(D_i\in\{0,1\}\), and define potential receipt \(D_i(1),D_i(0)\) and potential outcomes \(Y_i(1),Y_i(0)\).
+
+\vspace{0.5em}
+\noindent \textbf{IV assumptions (as in the slides).}
+\begin{itemize}
+  \item \textbf{SUTVA:} \(D_i = D_i(1)Z_i + D_i(0)(1-Z_i)\) and \(Y_i = Y_i(1)D_i + Y_i(0)(1-D_i)\).
+  \item \textbf{Instrument independence:} \(\big(Y_i(0),Y_i(1),D_i(1),D_i(0)\big)\perp Z_i\).
+  \item \textbf{Relevance:} \(\E[D_i\mid Z_i=1]\neq \E[D_i\mid Z_i=0]\).
+  \item \textbf{Exclusion:} outcomes depend on receipt \(D\) only (i.e., \(Y_i(d,z)=Y_i(d)\); no direct effect of \(Z\) on \(Y\)).
+\end{itemize}
+
+\noindent \textbf{Important:} do \emph{not} invoke monotonicity yet; allow for defiers.
+
+\begin{enumerate}[label=\textbf{1.\alph*}]
+  \item \textbf{Start with the first stage.}
+  Define the (population) intent-to-treat effect on receipt:
+  \[
+    ITT_D \equiv \E[D_i\mid Z_i=1]-\E[D_i\mid Z_i=0].
+  \]
+  Using SUTVA and instrument independence, show that
+  \[
+    ITT_D = \E\!\left[D_i(1)-D_i(0)\right].
+  \]
+
+  \item \textbf{Show that \(ITT_D\) is ``compliers minus defiers'' (no monotonicity).}
+  Define compliance types by the pair \(\big(D_i(0),D_i(1)\big)\).
+  Prove that
+  \[
+    ITT_D = \Pr[\text{complier}] - \Pr[\text{defier}].
+  \]
+  \emph{Hint:} write \(D_i(1)-D_i(0)\) as a function of type.
+
+  \item \textbf{Interpretation (short answer).}
+  Explain why this result makes relevance (\(ITT_D\neq 0\)) an assumption about the presence/absence of compliers and defiers.
+
+  \item \textbf{Now do the reduced form (numerator).}
+  Define the (population) intent-to-treat effect on outcomes:
+  \[
+    ITT_Y \equiv \E[Y_i\mid Z_i=1]-\E[Y_i\mid Z_i=0].
+  \]
+  Using SUTVA, instrument independence, and exclusion, show that
+  \[
+    ITT_Y
+    = \E\!\left[Y_i\!\big(D_i(1)\big) - Y_i\!\big(D_i(0)\big)\right].
+  \]
+
+  \item \textbf{Show that \(ITT_Y\) is a type-weighted difference (no monotonicity).}
+  Using the compliance types defined above and the exclusion restriction, prove that
+  \[
+    ITT_Y
+    = \Pr[\text{complier}] \cdot \E\!\left[Y(1)-Y(0)\mid \text{complier}\right]
+    - \Pr[\text{defier}] \cdot \E\!\left[Y(1)-Y(0)\mid \text{defier}\right].
+  \]
+
+
+  \item \textbf{Put the numerator and denominator together (still no monotonicity).}
+  Define the Wald estimand (binary \(Z\)):
+  \[
+    \tau_{Wald} \equiv \frac{ITT_Y}{ITT_D}.
+  \]
+  Using your answers above, show that
+  \[
+    \tau_{Wald}
+    =
+    \frac{
+      \Pr[\text{complier}] \cdot \E\!\left[Y(1)-Y(0)\mid \text{complier}\right]
+      - \Pr[\text{defier}] \cdot \E\!\left[Y(1)-Y(0)\mid \text{defier}\right]
+    }{
+      \Pr[\text{complier}] - \Pr[\text{defier}]
+    }.
+  \]
+
+  \item \textbf{Wald without monotonicity (short answer + algebra).}
+    Define \(LATE_C \equiv \E[Y(1)-Y(0)\mid \text{complier}]\) and \(ATE_F \equiv \E[Y(1)-Y(0)\mid \text{defier}]\) to simplify the expression.
+  
+  
+  Show that you can rewrite \(\tau_{Wald}\) as
+  \[
+    \tau_{Wald} = w_C\,LATE_C + w_F\,ATE_F,
+  \]
+  where \(w_C+w_F=1\) but \(w_F<0\) whenever \(\Pr[\text{defier}]>0\).
+  Give explicit formulas for \(w_C\) and \(w_F\), and briefly interpret why the weight on defiers is negative.
+
+  \item \textbf{Now impose monotonicity and prove the LATE theorem (binary case).}
+  Add the monotonicity assumption (no defiers):
+  \[
+    D_i(1)\ge D_i(0)\quad \text{for all } i.
+  \]
+  Conclude that \(\Pr[\text{defier}]=0\), so that \(ITT_D=\Pr[\text{complier}]\), and show that
+  \[
+    \tau_{Wald}
+    = \frac{ITT_Y}{ITT_D}
+    = \E\!\left[Y(1)-Y(0)\mid D(1)-D(0)=1\right].
+  \]
+\end{enumerate}
+
+\vspace{0.75em}
+\hrule
+\vspace{0.75em}
+
+\section*{Problem 2: Fuzzy RD is IV (a local Wald ratio)}
+
+\noindent One way to connect IV to RD is that \textbf{fuzzy RD} is an IV design:
+crossing a cutoff induces a jump in treatment probability, but does not deterministically assign treatment.
+
+\vspace{0.5em}
+\noindent Let \(R_i\) be a running variable with cutoff \(c\). Define the cutoff indicator
+\[
+  Z_i \equiv \mathbf{1}\{R_i\ge c\},
+\]
+let \(D_i\) be actual treatment receipt (which may be imperfectly determined by \(Z_i\)), and \(Y_i\) the outcome.
+
+\begin{enumerate}[label=\textbf{2.\alph*}]
+  \item \textbf{Sharp vs.\ fuzzy RD estimands.}
+  Define the discontinuity in conditional expectations at the cutoff:
+  \[
+    \Delta_Y \equiv \lim_{r\downarrow c}\E[Y\mid R=r]-\lim_{r\uparrow c}\E[Y\mid R=r],
+    \qquad
+    \Delta_D \equiv \lim_{r\downarrow c}\E[D\mid R=r]-\lim_{r\uparrow c}\E[D\mid R=r].
+  \]
+  What is the \textbf{sharp RD} estimand in terms of \(\Delta_Y\) when \(D=Z\) (deterministic assignment at the cutoff)?
+  What is the \textbf{fuzzy RD} (Wald) estimand in terms of \(\Delta_Y\) and \(\Delta_D\)?
+
+  \item \textbf{Connect to IV.}
+  Explain (2--5 sentences) why the fuzzy RD estimand is a Wald ratio with instrument \(Z=\mathbf{1}\{R\ge c\}\), but where the comparison is made ``locally'' around \(R=c\).
+  Who are the ``compliers'' in the fuzzy RD setting?
+
+  \item \textbf{Assumptions (RD language \(\leftrightarrow\) LATE language).}
+  List the main assumptions needed for the fuzzy RD Wald ratio to have a LATE interpretation at the cutoff, and map each one to the corresponding LATE/IV assumption (independence/as-good-as-random, exclusion, monotonicity, relevance).
+\end{enumerate}
+
+\vspace{0.75em}
+\hrule
+\vspace{0.75em}
+
+\section*{Coding A: FWL partialling out for IV (simulated data)}
+
+This coding problem shows how the "partialling out" (Frisch--Waugh--Lovell) idea works for IV.
+You will compute three versions of the IV estimate:
+\begin{enumerate}[label=(\roman*)]
+  \item the raw Wald ratio (no covariates),
+  \item the covariate-adjusted Wald ratio using FWL residualization, and
+  \item the ``canned'' 2SLS estimate from software.
+\end{enumerate}
+
+\vspace{0.5em}
+\noindent \textbf{Simulated dataset.} Use the following data-generating process:
+\begin{verbatim}
+set.seed(30600)
+n <- 3000
+X <- rnorm(n)
+U <- rnorm(n)
+
+# Instrument assignment depends on X (so Z is NOT unconditionally randomized),
+# but is independent of U given X.
+Z <- rbinom(n, 1, plogis(0.5 * X))
+
+# Endogenous receipt D: depends on Z, X, and unobserved U
+v <- rnorm(n)
+D_star <- -0.2 + 0.8 * Z + 0.7 * X + 1.0 * U + v
+D <- as.numeric(D_star > 0)
+
+# Outcome depends on D, X, and U
+tau <- 1.5
+eps <- rnorm(n)
+Y <- tau * D + 0.5 * X + 1.0 * U + eps
+
+df <- data.frame(Y, D, Z, X)
+\end{verbatim}
+
+\begin{enumerate}[label=\textbf{A.\alph*}]
+  \item \textbf{Inspect the simulated data.}
+  Report \(n\), \(\bar D\), and the first-stage difference in means \(\bar D_{Z=1}-\bar D_{Z=0}\).
+  Also report \(\bar X_{Z=1}-\bar X_{Z=0}\). (It should not be exactly zero.)
+
+  \item \textbf{IV by hand (no covariates): Wald ratio.}
+  Compute
+  \[
+    \widehat{ITT}_Y=\bar Y_{Z=1}-\bar Y_{Z=0},
+    \qquad
+    \widehat{ITT}_D=\bar D_{Z=1}-\bar D_{Z=0},
+    \qquad
+    \hat\tau_{Wald}=\frac{\widehat{ITT}_Y}{\widehat{ITT}_D}.
+  \]
+  Report \(\hat\tau_{Wald}\).
+
+  \item \textbf{IV with covariates using FWL residualization.}
+  Residualize \(Y\), \(D\), and \(Z\) on \(X\) using OLS:
+  \[
+    \tilde Y_i \equiv Y_i - \widehat{\E}[Y_i\mid X_i],
+    \qquad
+    \tilde D_i \equiv D_i - \widehat{\E}[D_i\mid X_i],
+    \qquad
+    \tilde Z_i \equiv Z_i - \widehat{\E}[Z_i\mid X_i].
+  \]
+  Concretely, this means:\vspace{-0.25em}
+  \begin{enumerate}[label=(\roman*)]
+    \item run three separate regressions: \(Y\) on \(X\), \(D\) on \(X\), and \(Z\) on \(X\) (each with an intercept);
+    \item keep the residuals from each regression, which are the parts of \(Y,D,Z\) not explained by \(X\).
+  \end{enumerate}
+  \vspace{0.25em}
+  (If \(X\) were a \emph{vector} of controls, you would regress on all columns of \(X\) at once; the idea is the same.)
+
+  Then compute the \textbf{covariate-adjusted Wald/IV} estimate:
+  \[
+    \hat\tau_{FWL}=\frac{\sum_{i=1}^n \tilde Z_i\,\tilde Y_i}{\sum_{i=1}^n \tilde Z_i\,\tilde D_i}.
+  \]
+  Report \(\hat\tau_{FWL}\). (It should be much closer to \(\tau=1.5\) than the raw Wald ratio.)
+
+  \item \textbf{Canned 2SLS using software.}
+  Use \texttt{AER::ivreg()} to estimate 2SLS with the same covariate \(X\) included in both stages:
+  \[
+    Y \sim D + X \quad \text{instrumenting \(D\) with \(Z\), and treating \(X\) as its own instrument.}
+  \]
+  Report the coefficient on \(D\) and its standard error. Confirm it matches \(\hat\tau_{FWL}\) up to small numerical tolerance.
+
+\end{enumerate}
+
+\vspace{0.75em}
+\hrule
+\vspace{0.75em}
+
+\section*{Coding B: Replicate Angrist--Krueger (1991)}
+
+In this question you will replicate parts of Angrist and Krueger (1991), ``Does compulsory school attendance affect schooling and earnings?'' (QJE).
+The key idea is to instrument years of education with quarter of birth.
+
+\vspace{0.25em}
+\noindent \textbf{Reference:} Angrist, Joshua D. and Alan B. Krueger. 1991. ``Does compulsory school attendance affect schooling and earnings?'' \emph{The Quarterly Journal of Economics} 106(4): 979--1014.
+
+\vspace{0.5em}
+\noindent The dataset is available at:
+https://raw.githubusercontent.com/UChicago-pol-methods/PLSC30600/refs/heads/main/data/angrist-krueger.csv
+
+\vspace{0.5em}
+\noindent The variables are:
+\begin{itemize}
+  \item \texttt{log\_weekly\_wage}: \(\log\) weekly wage (outcome)
+  \item \texttt{education}: years of education (endogenous regressor)
+  \item \texttt{quarter\_of\_birth}: \(Z\in\{1,2,3,4\}\) (instrument)
+  \item \texttt{year\_of\_birth}: year of birth (coded as integers)
+  \item \texttt{place\_of\_birth}: place of birth (coded as integers)
+\end{itemize}
+
+\begin{enumerate}[label=\textbf{B.\alph*}]
+  \item \textbf{Read and inspect.}
+  Read in the data, report \(n\), and report the set of unique values of \texttt{quarter\_of\_birth} and \texttt{year\_of\_birth}.
+
+  \item \textbf{Table III, Panel B.}
+  Re-generate Table III, Panel B. You may use \texttt{lm} and \texttt{AER::ivreg()} for standard errors. 
+
+  \item \textbf{Table V (many instruments).}
+  Re-generate the years-of-education coefficient and standard error from only the first two columns of Table V. Report only the \texttt{education} coefficient and its standard error (no need to report all dummy coefficients, test statistics, etc.).
+
+  \item \textbf{Brief interpretation.}
+  Compare your Table III (Panel B) 2SLS estimate to your Table V estimate. 
+
+  \item \textbf{LATE theorem conditions: are they plausible here? (short essay)}
+  List the conditions required for the LATE theorem interpretation of IV/2SLS (in the Imbens--Angrist framework):
+  \begin{itemize}
+    \item SUTVA / well-defined potential outcomes
+    \item independence (as-good-as-random instrument, possibly conditional on controls)
+    \item exclusion (no direct effect of the instrument on the outcome)
+    \item monotonicity (no defiers, relative to the instrument shift)
+    \item relevance (nontrivial first stage)
+  \end{itemize}
+  For each condition, briefly discuss whether it seems satisfied in the Angrist--Krueger quarter-of-birth instrument setting, and why (or why not).
+  Be concrete about what the ``compliers'' are in this application and what causal effect your 2SLS estimate can be interpreted as.
+\end{enumerate}
