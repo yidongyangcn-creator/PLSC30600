@@ -1,0 +1,724 @@
+% !Rnw weave = Sweave
+\documentclass[xcolor={dvipsnames}, handout]{beamer}
+
+\RequirePackage{../assets/pres-template_MOW}
+\usepackage{verbatim}
+
+\setkeys{Gin}{keepaspectratio}
+
+%--------------------------------------------------------------------------
+% Specific to this document -----------------------------------------------
+%--------------------------------------------------------------------------
+% \setbeamercovered{transparent}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\setlength{\tabcolsep}{1.3pt}
+\title{PLSC 30600}
+\subtitle{Week 7: Instrumental variables and regression discontinuity}
+\date{Winter 2026}
+\author{Molly Offer-Westort}
+\institute{Department of Political Science, \\University of Chicago}
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+<<setup, echo=FALSE, results=hide>>=
+set.seed(60637)
+# library(ggplot2)
+@
+
+%-------------------------------------------------------------------------------%
+\frame{\titlepage
+\thispagestyle{empty}
+}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Roadmap}
+\begin{itemize}
+\item Instrumental variables (IV): encouragement designs, Wald estimator, LATE, weak instruments
+\item \textcolor{gray}{Regression discontinuity (RD): sharp vs.\ fuzzy, bandwidth sensitivity, diagnostics (next)}
+\end{itemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Why instrumental variables?}
+
+In many settings, treatment \textcolor{cyan}{receipt} \(D_i\) is not randomized.\pause
+
+\begin{itemize}
+\item Some units select into/out of treatment based on unobservables.\pause
+\item If so, comparisons by \(D_i\) generally mix causation with selection.\pause
+\item IV uses a variable \(Z_i\) that shifts \(D_i\) for some units \emph{as good as randomly}.
+\end{itemize}
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Encouragement design: assignment vs.\ receipt}
+
+\begin{itemize}
+\item \(Z_i \in \{0,1\}\): randomized encouragement / assignment \pause
+\item \(D_i \in \{0,1\}\): treatment actually received \pause
+\item \(Y_i\): outcome \pause
+\end{itemize}
+
+Key idea: \(Z\) is the design feature we trust; \(D\) is endogenous.
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Canonical IV DAG}
+
+\begin{columns}
+\begin{column}{0.48\textwidth}
+\begin{itemize}
+\item \(U\): unobserved confounder of \(D\) and \(Y\)\pause
+\item \(Z\): instrument / encouragement\pause
+\item Exclusion: no direct arrow \(Z \to Y\)\pause
+\item Random assignment: \(Z \indep U\)
+\end{itemize}
+\end{column}
+\begin{column}{0.52\textwidth}
+\centering
+\begin{tikzpicture}[x=2.4cm,y=1.6cm,>=stealth, thick]
+\node (Z) at (0,0) {$Z$};
+\node (D) at (1.2,0) {$D$};
+\node (Y) at (2.4,0) {$Y$};
+\node (U) at (1.2,1.0) {\textcolor{gray}{$U$}\\[-0.05cm]\scriptsize\textcolor{gray}{(unobserved)}};
+\draw[->] (Z) -- (D);
+\draw[->] (D) -- (Y);
+\draw[->, gray] (U) -- (D);
+\draw[->, gray] (U) -- (Y);
+\end{tikzpicture}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Potential outcomes notation}
+
+\begin{wideitemize}
+\item Define
+\begin{itemize}
+\item Treatment potential outcomes: \(Y_i(1), Y_i(0)\)\pause
+\item Potential treatment receipt under encouragement: \(D_i(1), D_i(0)\)\pause
+\end{itemize}
+\item \textbf{Assume}: SUTVA
+\begin{itemize}
+\item Observed receipt: \(D_i = D_i(1)Z_i + D_i(0)(1-Z_i)\)\pause
+\item Observed outcome: \(Y_i = Y_i(1)D_i + Y_i(0)(1-D_i)\)\pause
+\end{itemize}
+\end{wideitemize}
+
+\vspace{0.5cm}
+
+\cite{imbens-angrist_1994}: define counterfactuals for \emph{receipt} \(D_i(z)\) in addition to \(Y_i(d)\).\pause
+
+\vspace{0.5cm}
+
+\textbf{Condition 0} (Exclusion): \(Y_i(d,z)=Y_i(d)\) for all \(d,z\). 
+The instrument does not affect the outcome except through the treatment. 
+
+(\emph{Exclusion} is already built into our outcome notation here: we write \(Y_i(1),Y_i(0)\) rather than \(Y_i(d,z)\), so \(Z\) affects \(Y\) only through receipt \(D\).)
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+
+\begin{frame}{Existence of instruments}
+
+\textbf{Condition 1} (Instrument independence + relevance): Let $Z$ be a random variable such that:
+\begin{itemize}
+\item[i.] \(\big(Y_i(0),Y_i(1),D_i(1), D_i(0)\big)\) is jointly independent of \(Z_i\) (as-good-as-random \(Z\)), and
+\item[ii.] $\E[D_i \rvert Z_i = z]$ is not constant in $z$. (Non-trivial first stage)
+\end{itemize}
+
+\vspace{0.5cm}
+
+I.e., there exists a variable \(Z\) that shifts treatment receipt \(D\) for some units, and which is as good as randomly assigned. 
+
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+
+\begin{frame}{Monotonicity}
+
+\textbf{Condition 2} (Monotonicity): 
+\begin{itemize}
+\item Either \(D_i(1) \ge D_i(0)\) for all \(i\), or \(D_i(1) \le D_i(0)\) for all \(i\).
+\end{itemize}
+
+\vspace{0.5cm}
+
+We will focus on no defiers: \(D_i(1) \ge D_i(0)\) for all \(i\).
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Compliance types (principal strata)}
+\small
+Define types by \(\big(D_i(0), D_i(1)\big)\):
+\[
+\begin{array}{l|cc}
+\text{Type} & D_i(0) & D_i(1) \\\hline
+\text{Never-taker} & 0 & 0 \\
+\text{Always-taker} & 1 & 1 \\
+\text{Complier} & 0 & 1 \\
+\text{Defier} & 1 & 0
+\end{array}
+\]
+
+\pause
+Only compliers (and defiers) change \(D\) when \(Z\) changes.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Angrist \& Imbens: formal LATE identification}
+
+
+Theorem 1 (binary \(Z\) special case):\pause
+\begin{align*}
+LATE_{1,0}
+&\equiv \E\!\left[Y(1)-Y(0)\mid D(1)-D(0)=1\right] \\
+&= \frac{\E[Y\mid Z=1]-\E[Y\mid Z=0]}{\E[D\mid Z=1]-\E[D\mid Z=0]}.
+\end{align*}
+\vspace{0.5cm}
+
+\pause
+Fixed effects / ``movers'' logic---we learn about effects for units whose treatment status changes.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Step 1: first stage = share of compliers}
+\small
+\begin{align*}
+ITT_D
+&= \E[D\mid Z=1]-\E[D\mid Z=0] \\
+&= \E[D(1)-D(0)].
+\end{align*}
+
+\pause
+By compliance type,
+\[
+D(1)-D(0)=
+\begin{cases}
+1 & \text{complier}\\
+-1 & \text{defier}\\
+0 & \text{always / never}
+\end{cases}
+\]
+
+\pause
+So
+\[
+ITT_D = \Pr[\text{complier}]-\Pr[\text{defier}].
+\]
+
+\pause
+Under monotonicity (no defiers): \(ITT_D=\Pr[\text{complier}]\).
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Step 2: reduced form = complier effect $\times$ share of compliers}
+\small
+\begin{align*}
+ITT_Y
+&= \E[Y\mid Z=1]-\E[Y\mid Z=0] \\
+&= \E\big[Y(D(1)) - Y(D(0))\big].
+\end{align*}
+
+\pause
+Using exclusion (so outcomes only depend on \(D\)) and compliance types:
+\[
+Y(D(1)) - Y(D(0))=
+\begin{cases}
+Y(1)-Y(0) & \text{complier}\\
+Y(0)-Y(1) & \text{defier}\\
+0 & \text{always / never}
+\end{cases}
+\]
+
+\pause
+So
+\begin{align*}
+ITT_Y
+&= \Pr[\text{complier}] \cdot \E\!\left[Y(1)-Y(0)\mid \text{complier}\right] \\
+&\quad - \Pr[\text{defier}] \cdot \E\!\left[Y(1)-Y(0)\mid \text{defier}\right].
+\end{align*}
+
+\pause
+\[
+\text{Under monotonicity:}\quad
+ITT_Y=\Pr[\text{complier}] \cdot \E\!\left[Y(1)-Y(0)\mid \text{complier}\right].
+\]
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Wald = LATE}
+\small
+Combine the previous two slides:\pause
+\begin{align*}
+\hat\tau_{Wald}
+&\equiv \frac{ITT_Y}{ITT_D} \\
+&= \frac{\Pr[\text{complier}] \cdot \E\!\left[Y(1)-Y(0)\mid \text{complier}\right]}
+{\Pr[\text{complier}]} \\
+&= \E\!\left[Y(1)-Y(0)\mid \text{complier}\right].
+\end{align*}
+
+\pause
+\textbf{Interpretation:} the Wald estimator recovers the average treatment effect for the subpopulation whose treatment receipt is shifted by the instrument.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Motivation: randomized field experiment with one-sided noncompliance}
+\small
+Canonical example: \cite{gerber-green_2000}: a get-out-the-vote field experiment where canvassers are randomly assigned to attempt contact.\pause
+
+\begin{wideitemize}
+\item \(Z_i\in\{0,1\}\): randomly assigned \emph{attempt} (assigned to canvassing).\pause
+\item \(D_i\in\{0,1\}\): actual contact / receipt (some assigned units are not reached).\pause
+\item One-sided noncompliance: by design, \(Z_i=0 \Rightarrow D_i=0\) (controls are not contacted).\pause
+\item Outcome \(Y_i\): turnout.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+In this setting, \(\widehat{ITT}_Y=\bar Y_{Z=1}-\bar Y_{Z=0}\) is a \textbf{design-based} causal effect of assignment,
+and randomization inference (Week 6) is a natural way to test the sharp null of no assignment effect.
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Design-based inference: only assignment is random}
+\small
+Week 6 perspective: treat the \emph{potential outcomes} as fixed features of the finite population; the only randomness comes from the assignment mechanism for \(Z\).\pause
+
+\begin{wideitemize}
+\item Define potential outcomes under encouragement assignment: \(Y_i(z)\) and \(D_i(z)\), for \(z\in\{0,1\}\).\pause
+\item Causal estimands (finite-population ITTs):
+\[
+ITT_Y \equiv \bar Y(1)-\bar Y(0),
+\qquad
+ITT_D \equiv \bar D(1)-\bar D(0).
+\]\pause
+\item Under complete randomization of \(Z\), the difference-in-means estimators
+\(\widehat{ITT}_Y=\bar Y_{Z=1}-\bar Y_{Z=0}\) and \(\widehat{ITT}_D=\bar D_{Z=1}-\bar D_{Z=0}\)
+have a \textbf{design-based} sampling distribution.\pause
+\end{wideitemize}
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Randomization inference for the reduced form / first stage}
+\small
+Test the sharp null of \emph{no assignment effect} using Fisher randomization inference.\pause
+
+\begin{wideitemize}
+\item Reduced form null: \(Y_i(1)=Y_i(0)\) for all \(i\). First stage null: \(D_i(1)=D_i(0)\) for all \(i\).\pause
+\item Pick a statistic.\pause
+\item Re-draw \(Z\) according to the \emph{actual} assignment mechanism (e.g., all permutations with fixed \(n_1\)).\pause
+\item The randomization distribution gives an exact \(p\)-value (finite-sample, design-based).\pause
+\end{wideitemize}
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{A non-randomized IV example: Angrist--Krueger (1991)}
+\small
+Angrist \& Krueger (1991) instrument years of education with quarter of birth.\pause\ \cite{angrist-krueger_1991}
+
+\begin{wideitemize}
+\item Here, \(Z\) is \emph{not} literally randomized by a known experimenter.\pause
+\item The identifying claim is an \textbf{``as-if random''} story:
+conditional on cohort and other controls, quarter of birth shifts schooling (relevance) but has no direct effect on wages (exclusion).\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\textbf{So what does ``uncertainty'' mean here?}\pause
+\begin{wideitemize}
+\item The usual 2SLS standard error is \textbf{sampling-based} (superpopulation) or \textbf{large-sample} uncertainty: if we repeatedly sampled new datasets from the same population, \(\hat\tau_{2SLS}\) would vary.
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Superpopulation inference: repeated sampling}
+\small
+Superpopulation view: \((Y_i,D_i,Z_i,X_i)\) are i.i.d.\ draws from a population.\pause
+
+\begin{wideitemize}
+\item The estimand is a population quantity (e.g., the \(\beta\) that solves a population moment condition).\pause
+\item Inference is about the sampling distribution of \(\hat\beta\) across hypothetical repeated samples.\pause
+\item Large-\(n\) tools (LLN/CLT) give an approximation:
+\[
+\sqrt{n}\,(\hat\beta-\beta)\ \overset{\cdot}{\sim}\ N(0,V),
+\]
+so we report \(SE(\hat\beta)\approx \sqrt{\hat V/n}\).\pause
+\end{wideitemize}
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Superpopulation standard errors: what they do (and do not) capture}
+\small
+\begin{wideitemize}
+\item A 2SLS standard error captures \textbf{sampling uncertainty} (and sometimes weak dependence assumptions), not uncertainty about whether the IV assumptions are true.\pause
+\item In Angrist--Krueger, the key uncertainties are:
+\begin{itemize}
+\item is quarter of birth ``as-if random'' after controls?
+\item does quarter of birth affect wages only through schooling?
+\end{itemize}\pause
+\item Those are not solved by smaller standard errors; they require design arguments, robustness checks, and alternative specifications.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\scriptsize
+See \cite{aronow-miller_2019} for the separation between design-based logic and superpopulation (large-sample) approximations.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{A worked Wald example (intuition)}
+\small
+\[
+\begin{array}{c|cc}
+& Z=1 & Z=0 \\\hline
+E[Y\mid Z] & 8 & 5 \\
+E[D\mid Z] & 0.75 & 0.25
+\end{array}
+\qquad\Rightarrow\qquad
+ITT_Y=3,\ \ ITT_D=0.5,\ \ \hat\tau_{Wald}=6.
+\]
+
+\pause
+Read this as:
+\begin{itemize}
+\item encouragement increases the outcome by 3 on average \pause
+\item but it only changes treatment receipt for 50\% of units \pause
+\item so the effect for those whose \(D\) changes must be larger.
+\end{itemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{When does the story break?}
+\begin{itemize}
+\item If \textbf{defiers} exist, then \(ITT_D=\Pr[\text{C}]-\Pr[\text{F}]\) and \(ITT_Y\) mixes complier and defier effects.\pause
+\item If \textbf{exclusion fails} (direct effect of \(Z\) on \(Y\)), then always/never-takers can contribute to \(ITT_Y\) but not to \(ITT_D\).\pause
+\item If the \textbf{first stage is tiny}, the ratio is noisy (weak instrument problem).
+\end{itemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{What is 2SLS? (conceptual)}
+\small
+Goal: estimate the causal effect of receipt \(D\) on \(Y\) when \(D\) is endogenous.\pause
+
+\begin{wideitemize}
+\item OLS uses \emph{all} variation in \(D\)---including variation driven by unobservables \(U\) that also affect \(Y\).\pause
+\item An instrument \(Z\) isolates variation in \(D\) induced by \(Z\) (conditional on controls \(X\)).\pause
+\item 2SLS idea: replace \(D\) with the component predicted by \(Z\) (and \(X\)), then run the outcome regression of \(Y\) on \(\hat D\) (and the same \(X\)).\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\begin{align*}
+\hat D_i &\equiv \E[D_i\mid Z_i, X_i], \\
+D_i &= \hat D_i + \big(D_i-\hat D_i\big).
+\end{align*}
+
+\vspace{-0.25em}
+\scriptsize
+\begin{itemize}
+\item \(\hat D_i\): variation in \(D\) explained by \((Z,X)\)
+\item \(\big(D_i-\hat D_i\big)\): remaining (endogenous) variation
+\end{itemize}
+
+\vspace{0.25em}
+\pause
+In the simple binary-\(Z\), no-controls case, the resulting 2SLS coefficient equals the Wald ratio.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{2SLS as an algorithm (binary \(Z\))}
+\small
+\begin{itemize}
+\item First stage: regress \(D\) on \(Z\)\pause
+\[
+D_i=\pi_0+\pi_1 Z_i+v_i \quad\Rightarrow\quad \hat D_i
+\]\pause
+\item Second stage: regress \(Y\) on \(\hat D\)\pause
+\[
+Y_i=\alpha+\tau\,\hat D_i+e_i
+\]
+\end{itemize}
+
+\pause
+With binary \(Z\) and no controls, the 2SLS coefficient equals the Wald ratio.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{2SLS with covariates (sketch)}
+\small
+\begin{itemize}
+\item First stage: \(D_i=\pi_0+\pi_1 Z_i + X_i^\top\pi_2 + v_i\)\pause
+\item Second stage: \(Y_i=\alpha+\tau\,\hat D_i + X_i^\top\beta + e_i\)\pause
+\item Intuition: ``use the part of \(D\) predicted by \(Z\) (after partialling out \(X\)).''
+\end{itemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{IV assumptions with covariates \(X\)}
+\small
+\begin{wideitemize}
+\item Setup: observe \((Y_i, D_i, Z_i, X_i)\), define \(Y_i(1),Y_i(0)\) and \(D_i(1),D_i(0)\).\pause
+\item \textbf{(Conditional) independence of the instrument:}
+\[
+\big(Y_i(0),Y_i(1),D_i(1),D_i(0)\big)\ \perp\ Z_i \mid X_i.
+\]\pause
+\item \textbf{Exclusion:} \(Y_i(d,z)=Y_i(d)\) (no direct effect of \(Z\) on \(Y\)).\pause
+\item \textbf{Monotonicity (no defiers):} \(D_i(1)\ge D_i(0)\) for all \(i\).\pause
+\item \textbf{First stage / relevance (given \(X\)):} \(\E[D_i\mid Z_i=1,X_i]\neq \E[D_i\mid Z_i=0,X_i]\).\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\scriptsize
+If \(Z\) is truly randomized (encouragement design), the independence condition holds unconditionally; \(X\) is then mainly for precision / adjustment.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Multiple instruments (and why matrix notation)}
+\small
+So far: one binary encouragement \(Z_i\).\pause
+
+\begin{wideitemize}
+\item In practice, we often use an \emph{instrument set}: a vector of instruments \(\mathbf{z}_i\) (e.g., multiple encouragement measures), plus an intercept.\pause
+\item With controls \(X_i\), 2SLS typically treats the controls as instruments for themselves.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\[
+\mathbf{z}_i \equiv \begin{bmatrix}1\\ Z_i\\ X_i\end{bmatrix}
+\quad\text{(one instrument + controls)}
+\]
+\[
+\mathbf{z}_i \equiv \begin{bmatrix}1\\ Z_{1i}\\ \vdots\\ Z_{Li}\\ X_i\end{bmatrix}
+\quad\text{(multiple instruments + controls)}.
+\]
+
+\vspace{0.25em}
+\pause
+This is why the 2SLS formula is easiest to write using the projection onto the space spanned by the instrument matrix.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{2SLS in one equation (matrix form)}
+\small
+Let \(\mathbf{X}\) be the full regressor matrix in the structural equation (endogenous + exogenous), and \(\mathbf{Z}\) the instrument matrix (all exogenous variables used as instruments).
+
+\vspace{0.25em}
+Stacking the instrument vectors \(\mathbf{z}_i\) gives \(\mathbf{Z}=[\mathbf{z}_1^\top;\ldots;\mathbf{z}_n^\top]\).
+
+\vspace{0.25em}
+Define the projection matrix onto the instrument space:
+\[
+\mathbf{P}_Z \equiv \mathbf{Z}\big(\mathbf{Z}^\top \mathbf{Z}\big)^{-1}\mathbf{Z}^\top.
+\]
+\pause
+Then the 2SLS estimator is:
+\[
+\hat\beta_{2SLS}
+=\begin{aligned}[t]
+&\big(\mathbf{X}^\top \mathbf{P}_Z \mathbf{X}\big)^{-1} \\
+&\quad \mathbf{X}^\top \mathbf{P}_Z \mathbf{Y}.
+\end{aligned}
+\]
+\pause
+Equivalent view: first \emph{project} the regressors onto \(\mathrm{span}(\mathbf{Z})\), then run OLS in that projected space.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{2SLS with controls = ``partial out, then do IV''}
+\small
+Structural equation with controls:
+\[
+Y_i=\tau D_i + X_i^\top\beta + \varepsilon_i.
+\]
+\pause
+Equivalent implementation (Frisch--Waugh--Lovell / ``partialling out''):
+\begin{itemize}
+\item regress \(Y\) on \(X\) and keep residuals \(\tilde Y\)\pause
+\item regress \(D\) on \(X\) and keep residuals \(\tilde D\)\pause
+\item regress each instrument on \(X\) and keep residuals \(\tilde Z\)\pause
+\item run 2SLS of \(\tilde Y\) on \(\tilde D\), instrumenting with \(\tilde Z\) (same \(\hat\tau\) as ``2SLS with controls'')
+\end{itemize}
+\pause
+This makes the covariate-adjusted case look like the simple Wald/IV case again.\pause
+
+\vspace{0.25em}
+\scriptsize
+In practice: just include \(X\) in both stages and let software compute standard errors; don't hand-residualize unless you're careful about inference.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Toy example: OLS vs.\ Wald vs.\ 2SLS}
+\small
+Simulate endogeneity (an unobserved \(U\) affects both \(D\) and \(Y\)), but a randomized encouragement \(Z\) shifts \(D\).
+
+\vspace{0.25em}
+Result: OLS is biased, while Wald = 2SLS uses only \(Z\)-induced variation in \(D\) (targeting the complier LATE).
+
+\vspace{0.25em}
+\scriptsize
+<<iv-toy, echo=TRUE>>=
+set.seed(60637)
+n <- 2000
+Z <- rbinom(n, 1, 0.5)
+U <- rnorm(n); v <- rnorm(n); eps <- rnorm(n)
+D_star <- 0.2 + 1.0 * Z + 0.8 * U + v
+D <- as.numeric(D_star > 0)
+tau <- 2
+Y <- tau * D + U + eps
+
+ITT_Y <- mean(Y[Z == 1]) - mean(Y[Z == 0])
+ITT_D <- mean(D[Z == 1]) - mean(D[Z == 0])
+wald <- ITT_Y / ITT_D
+ols <- coef(lm(Y ~ D))[["D"]]
+
+X <- cbind(1, D); Zmat <- cbind(1, Z)
+Pz <- Zmat %*% solve(t(Zmat) %*% Zmat) %*% t(Zmat)
+beta_2sls <- solve(t(X) %*% Pz %*% X) %*% (t(X) %*% Pz %*% Y)
+tsls <- as.numeric(beta_2sls[2])
+
+round(c(true = tau, ols = ols, wald = wald, tsls = tsls), 3)
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+
+\begin{frame}[fragile]{Code: 2SLS with \texttt{ivreg}}
+\scriptsize
+<<ivreg-code, echo=TRUE, eval=TRUE>>=
+library(AER)  # provides ivreg()
+df <- data.frame(Y, D, Z)
+fit_iv <- ivreg(Y ~ D | Z, data = df)
+summary(fit_iv, diagnostics = TRUE)
+
+# With controls X in the data:
+# fit_iv_X <- ivreg(Y ~ D + X1 + X2 | Z + X1 + X2, data = df)
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{IV / 2SLS as moment-based estimation (GMM / minimum distance)}
+\small
+Core IV moment condition:
+\[
+\E\!\left[\mathbf{Z}_i\big(Y_i-\mathbf{X}_i^\top\beta\big)\right]=0.
+\]
+\pause
+Sample analog:
+\begin{align*}
+u_i(\beta) &\equiv Y_i-\mathbf{X}_i^\top\beta, \\
+\hat g(\beta) &\equiv \frac{1}{n}\sum_{i=1}^n \mathbf{Z}_i\,u_i(\beta).
+\end{align*}
+\pause
+\begin{wideitemize}
+\item \textbf{Just-identified}: \# moments = \# parameters \(\Rightarrow\) solve \(\hat g(\hat\beta)=0\).\pause
+\item \textbf{Overidentified}: \# moments \(>\) \# parameters \(\Rightarrow\) choose \(\hat\beta\) to make moments ``as close to 0 as possible'':
+\[
+\hat\beta=\arg\min_\beta\; \hat g(\beta)^\top \hat W \,\hat g(\beta).
+\]
+\end{wideitemize}
+\pause
+This is why ``IV'', ``2SLS'', and ``GMM/minimum distance'' fit under one umbrella.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Weak instruments (Staiger \& Stock 1997)}
+\begin{itemize}
+\item If the first stage is weak, TSLS/2SLS behaves poorly:\pause
+\begin{itemize}
+\item finite-sample bias toward OLS\pause
+\item standard errors / test sizes can be misleading\pause
+\end{itemize}
+\item Diagnostics:\pause
+\begin{itemize}
+\item first-stage \(F\)-statistic (rule-of-thumb: \(F \gtrsim 10\) as a warning flag)\pause
+\item first-stage partial \(R^2\)\pause
+\end{itemize}
+\item Conceptual link: weak first stage \(\Rightarrow\) dividing by a small number in the Wald ratio.
+\end{itemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{(Optional) Multi-valued \(Z\): IV as an average of local effects}
+\small
+Canonical IV estimand:
+\[
+\tau_{IV}(g)=\frac{\mathrm{Cov}(Y,g(Z))}{\mathrm{Cov}(D,g(Z))}.
+\]
+
+\pause
+Imbens--Angrist (1994) show: with multi-valued \(Z\), under monotonicity plus an ``aligned'' \(g(Z)\) condition, \(\tau_{IV}(g)\) is a weighted average of adjacent local effects \(LATE_{z_k,z_{k-1}}\) (nonnegative weights that sum to 1).
+
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+% \begin{frame}{(Optional) Multiple instruments \(\Rightarrow\) overidentification and the J test}
+% \small
+% \begin{wideitemize}
+% \item With multiple instruments, \(\hat g(\beta)\) is a \emph{vector} of sample moments.\pause
+% \item After estimating \(\hat\beta\) (e.g., by efficient GMM/2SLS), we can test whether the extra moments are ``close enough'' to 0.\pause
+% \item The overidentification statistic is the minimized minimum-distance objective:
+% \[
+% J \equiv n\,\hat g(\hat\beta)^\top \hat W \,\hat g(\hat\beta)
+% \ \overset{H_0}{\approx}\ \chi^2(\#\text{moments}-\#\text{parameters}).
+% \]\pause
+% \item Interpretation: failing the J test means \emph{at least one} instrument/restriction is inconsistent with the others.\pause
+% \item Caution: passing the test is not proof of validity (low power is common).
+% \end{wideitemize}
+% \end{frame}
+% 
+% %-------------------------------------------------------------------------------%
+% \begin{frame}{Same GMM logic outside IV: missing regressor GMM}
+% \scriptsize
+% \cite{abrevaya-donald_2017} study linear regression when a key regressor \(x\) is missing for some units:
+% \[
+% y_i=\alpha x_i + z_i^\top\beta + \varepsilon_i,
+% \qquad
+% x_i\ \text{missing for some }i.
+% \]
+% \pause
+% They add an auxiliary ``imputation'' projection (estimated on complete cases):
+% \[
+% x_i=z_i^\top\gamma+\xi_i,
+% \]
+% and then \emph{stack} moment conditions from (i) complete cases and (ii) the \(x\)-missing subsample.\pause
+% 
+% \vspace{0.25em}
+% Schematic moment blocks:
+% \[
+% \E\!\left[(1-m_i)\,w_i\big(y_i-\alpha x_i-z_i^\top\beta\big)\right]=0,
+% \qquad
+% \E\!\left[(1-m_i)\,z_i\big(x_i-z_i^\top\gamma\big)\right]=0,
+% \]
+% \[
+% \E\!\left[m_i\,z_i\big(y_i-z_i^\top(\gamma\alpha+\beta)\big)\right]=0.
+% \]
+% 
+% \vspace{0.25em}
+% Result: an \textbf{overidentified GMM} estimator with a natural J test---but now the test probes the \emph{missingness / imputation restriction} (not instrument validity).
+% \end{frame}
+
+%-------------------------------------------------------------------------------%
+\backupbegin
+%-------------------------------------------------------------------------------%
+
+\begin{frame}[allowframebreaks]{References}
+\bibliographystyle{apalike}
+\nocite{imbens-angrist_1994, angrist-et-al_1996, staiger-stock_1997}
+\nocite{imbens-lemieux_2008, mccrary_2008, lee_2008, cattaneo-et-al_2019}
+\bibliography{../assets/PLSC30600}
+\end{frame}
+%-------------------------------------------------------------------------------%
+
+\backupend
+\end{document}
