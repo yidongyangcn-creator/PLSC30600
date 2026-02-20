@@ -1,0 +1,414 @@
+---
+title: "PLSC 30600 - Week 7 Discussion Section"
+output:
+  xaringan::moon_reader:
+    self_contained: true
+    mathjax: "default"
+    css: [beamerish.css]
+    nature:
+      highlightLines: true
+      ratio: '16:9'
+      countIncrementalSlides: false
+---
+
+# Today
+
+- Situating the IV estimator
+
+- Inference: randomization versus asymptotic
+
+- Caching
+
+
+---
+
+# Before there was IV
+
+$$Y_i=\alpha + \tau D_i + \epsilon_i$$
+
+--
+
+We can use OLS to estimate $\beta$:
+
+$$\hat{\tau}_{OLS} \rightarrow \tau$$
+
+--
+
+... but only under several conditions
+
+- OLS assumptions: random sampling, finite moments, full rank
+- Structural/causal interpretation assumption: $E[D_ie_i]=0$
+
+--
+
+When D is endogenous, or not randomly assigned, $D$ and $e_i$ correlate, meaning $E[D_ie_i] \neq 0$.
+
+Can't estimate $\tau$ with OLS.
+
+--
+
+Solution: 
+
+$$\hat{\tau}_{IV} \rightarrow \tau$$
+
+---
+
+# Enters the IV estimator
+
+$$\hat{\tau}_{IV} = \frac{Cov(Y,Z)}{Cov(D,Z)}$$
+
+--
+
+And when the treatment is binary, the Wald estimator:
+
+$$\hat{\tau}_{Wald} = \frac{E[Y|Z=1]-E[Y|Z=0]}{E[Y|D=1]-E[Y|D=0]}$$
+
+--
+
+How to get $\hat{\tau}_{IV}$: 2SLS (OLS twice)
+
+--
+
+With identifying assumptions, we can use IV estimators (and therefore 2SLS) to recover LATE.
+
+---
+
+# Spot the identifying assumptions
+
+How many assumptions for $\hat{\tau}_{IV} \rightarrow \tau$ relate to the assumptions or forms we've already specified?
+
+$$Y_i=\alpha + \tau D_i + \epsilon_i$$
+
+$$\hat{\tau}_{IV} = \frac{Cov(Y,Z)}{Cov(D,Z)}$$
+
+$$E[Z_ie_i]=0$$
+
+---
+
+# What about inference?
+
+We have so far talked about estimation, that we can use IV/2SLS to recover LATE under certain assumptions.
+
+--
+
+For inference, such as testing $H_0: \tau=\tau_0$, we need to know what the distribution of $\hat\tau-\tau_0$ is
+
+--
+
+This means we need to know the distribution of $\hat{\tau}$.
+
+How do we do this?
+
+---
+
+# Asymptotic versus randomized inference
+
+There are two ways to get the distribution of $\hat{\tau}$:
+
+--
+
+**Asymptotically**
+
+Intuition:
+- The problem: We have one sample from the population, and therefore one $\hat{\tau}$.
+- The solution: We redraw samples.
+
+--
+
+$$\sqrt n(\hat\tau-\tau_0) \rightarrow_d N(0,\sigma^2)$$
+
+We don't know $\sigma^2$ either, so we estimate it using the data we have.
+
+--
+
+For IV/2SLS:
+
+$$Var(\hat{\tau}_{2SLS})=\frac{\hat{\sigma^2}}{n}$$
+
+---
+
+# Asymptotic versus randomized inference
+
+There are two ways to get the distribution of $\hat{\tau}$:
+
+--
+
+**Randomization inference**
+
+Intuition:
+- The problem: We observe one treatment assignment, and therefore one $\hat{\tau}$.
+- The solution: We reshuffle treatment.
+
+--
+
+Permutation test for IV:
+- Enumerate all possible assignments of Z
+- Compute $\hat\tau$ under each assignment
+- Obtain the entire distribution of $\hat\tau$
+
+---
+
+# Asymptotic versus randomized inference
+
+Difference: the source of uncertainty
+
+i.e., What is treated as random?
+
+--
+
+> Asymptotic inference: sampling
+
+> Randomized inference: design
+
+---
+
+# Two types of inferences, two traditions
+
+**Fisher**
+- $H_0$: often sharp null ($\tau=0$)
+- p-value: How surprising is $\hat\tau$ under $H_0$? 
+- Report p-value as evidence against $H_0$
+
+--
+
+**Neyman-Pearson**
+- Specify $H_0$ and $H_1$
+- Specify the decision rule: type 1 ($\alpha$) and type 2 ($\beta$) errors
+- Reject $H_0$ when $\tau$ falls in a specific rejection region
+
+--
+
+**Different emphases**
+- Fisher: Exact distribution of test statistic
+- Neyman-Pearson: Long-run behavior, average effects
+
+---
+
+# “The null ritual”: Gigerenzer, Krauss & Vitouch (2004)
+
+Traditional hypothesis testing workflow conflates the two views:
+
+1. Set up a null $H_0$: “no difference/no effect” (Fisher)
+2. Choose $\alpha = 0.05$ (Neyman-Pearson)
+3. Compute a p-value (Fisher)
+4. If $p < 0.05$, declare “significant” and treat $H_0$ as false (Neyman-Pearson)
+5. If $p \ge 0.05$, declare “no effect” (Fisher)
+
+--
+
+What this does
+- Conflates evidence (Fisher) with decisions (N–P)
+- Encourages dichotomous thinking
+- Often ignores effect sizes, uncertainty, and design
+
+---
+
+```{r setup-sim, include=FALSE}
+set.seed(123)
+knitr::opts_chunk$set(fig.width = 7, fig.height = 4)
+```
+
+# Design-based variation
+
+Simulate a set of potential outcomes and recover the true ATE
+
+```{r finite-pop}
+N <- 2000
+X <- rnorm(N)
+
+tau <- 2
+Y0 <- 1 + 0.5*X + rnorm(N, sd = 1)
+Y1 <- Y0 + tau
+ATE_finite_true <- mean(Y1 - Y0)
+ATE_finite_true
+```
+
+---
+
+# Design-based variation
+
+Randomize treatment (complete randomization, half treated), estimate diff-in-means.
+
+```{r one-experiment}
+W <- rep(0, N)
+W[sample.int(N, N/2)] <- 1
+Yobs <- W*Y1 + (1-W)*Y0
+mean(Yobs[W==1]) - mean(Yobs[W==0])
+```
+
+---
+
+# Design-based sampling distribution
+
+Obtain the distribution of the differences-in-means estimator by permuting through different assignment mechanisms.
+
+```{r design-dist, cache=TRUE}
+R <- 2000
+ate_hat_design <- replicate(R, {
+  W <- rep(0, N)
+  W[sample.int(N, N/2)] <- 1
+  Yobs <- W*Y1 + (1-W)*Y0
+  mean(Yobs[W==1]) - mean(Yobs[W==0])
+})
+
+c(mean = mean(ate_hat_design), sd = sd(ate_hat_design))
+```
+
+---
+
+# Design-based sampling distribution
+
+Visualize
+
+```{r design-plot, cache=TRUE}
+hist(ate_hat_design,
+     main = "Design-based variation (population fixed)",
+     xlab = "ATE estimator (diff-in-means)")
+abline(v = ATE_finite_true, lwd = 3)
+```
+
+---
+
+# Sampling-based variation
+
+Same distribution, but this time simulate a super-population
+
+```{r}
+N_pop <- 5000
+X_pop  <- rnorm(N_pop)
+tau <- 2
+Y0_pop <- 1 + 0.5 * X_pop + rnorm(N_pop, sd = 1)
+Y1_pop <- Y0_pop + tau
+```
+
+---
+
+# Sampling-based sampling distribution
+
+Draw iid samples from the super-population and compute the ATE for each sample
+
+```{r}
+ate_hat_super <- replicate(R, {
+  idx_sample <- sample.int(N_pop, N, replace = FALSE)
+  Y0 <- Y0_pop[idx_sample]
+  Y1 <- Y1_pop[idx_sample]
+  W <- rbinom(N, 1, 0.5)
+  Yobs <- W * Y1 + (1 - W) * Y0
+  mean(Yobs[W == 1]) - mean(Yobs[W == 0])
+})
+
+c(mean = mean(ate_hat_super), sd = sd(ate_hat_super))
+```
+
+---
+
+# Sampling-based variation
+
+Visualize
+
+```{r super-plot, cache=TRUE}
+hist(ate_hat_super,
+     main = "Sampling-based variation\n(new sample each time)",
+     xlab = "Diff-in-means ATE estimator")
+abline(v = tau, lwd = 3)
+```
+
+---
+
+# Bootstrap is slow (computational repetition)
+
+Create **one realized dataset** and bootstrap the ATE.
+
+```{r realized-dataset}
+set.seed(999)
+N3 <- 3000
+X3 <- rnorm(N3)
+tau3 <- 2
+Y0_3 <- 1 + 0.5*X3 + rnorm(N3, sd = 1)
+Y1_3 <- Y0_3 + tau3
+
+W3 <- rbinom(N3, 1, 0.5)
+Y3 <- W3*Y1_3 + (1-W3)*Y0_3
+
+ate_obs <- mean(Y3[W3==1]) - mean(Y3[W3==0])
+ate_obs
+```
+
+---
+
+# Cache method 1: knitr chunk caching
+
+`{r cache=TRUE}`
+
+```{r boot-knitr-cache, cache=TRUE}
+B <- 4000
+ate_boot <- replicate(B, {
+  idx <- sample.int(N3, N3, replace = TRUE)
+  mean(Y3[idx][W3[idx]==1]) - mean(Y3[idx][W3[idx]==0])
+})
+
+c(se = sd(ate_boot),
+  ci_lo = unname(quantile(ate_boot, 0.025)),
+  ci_hi = unname(quantile(ate_boot, 0.975)))
+```
+
+---
+
+# Cache method 1: knitr chunk caching
+
+Great when:
+- you’re re-knitting the **same** document while editing
+- the slow chunk’s inputs are stable
+
+But, beware:
+- it’s tied to a cache folder (e.g., `*_cache/` or `knitr_cache/`)
+- changes in previous chunks will not apply
+
+---
+
+# Cache method 2: caching to `.rds`
+
+```{r boot-rds-cache}
+rds_file <- "ate_bootstrap_draws.rds"
+
+if (file.exists(rds_file)) {
+  ate_boot_rds <- readRDS(rds_file)
+} else {
+  B <- 4000
+  ate_boot_rds <- replicate(B, {
+    idx <- sample.int(N3, N3, replace = TRUE)
+    mean(Y3[idx][W3[idx]==1]) - mean(Y3[idx][W3[idx]==0])
+  })
+  saveRDS(ate_boot_rds, rds_file)
+}
+
+c(se = sd(ate_boot_rds),
+  ci_lo = unname(quantile(ate_boot_rds, 0.025)),
+  ci_hi = unname(quantile(ate_boot_rds, 0.975)))
+```
+
+---
+
+# Cache method 2: caching to `.rds`
+
+Especially great when:
+- results are expensive enough to be a *data artifact* (big sims/bootstraps)
+- you want reuse across documents/sessions
+- you want robustness to cache deletion
+
+--
+
+Thesis:
+
+> `cache=TRUE` speeds up knitting.  
+> `.rds` makes computation portable.
+
+---
+
+# References
+
+- Aronow, P. M., & Miller, B. T. (2019) *Foundations of Agnostic Statistics*
+
+- Gigerenzer, G., Krauss, S., & Vitouch, O. (2004). “The null ritual.” In *The Sage handbook of quantitative methodology for the social sciences*, 391–408.
+
+- Xie, Y. Cache time-consuming code chunks. R Markdown Cookbook. https://yihui.org/rmarkdown-cookbook/cache
