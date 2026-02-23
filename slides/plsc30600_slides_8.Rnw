@@ -1,0 +1,1265 @@
+% !Rnw weave = Sweave
+\documentclass[xcolor={dvipsnames}, handout]{beamer}
+
+\RequirePackage{../assets/pres-template_MOW}
+\usepackage{verbatim}
+
+\setkeys{Gin}{keepaspectratio}
+
+%--------------------------------------------------------------------------
+% Specific to this document -----------------------------------------------
+%--------------------------------------------------------------------------
+% \setbeamercovered{transparent}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\setlength{\tabcolsep}{1.3pt}
+\title{PLSC 30600}
+\subtitle{Week 8: Regression discontinuity (catch-up) + differences in differences}
+\date{Winter 2026}
+\author{Molly Offer-Westort}
+\institute{Department of Political Science, \\University of Chicago}
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+<<setup, echo=FALSE, results=hide>>=
+set.seed(30600)
+
+rd_make_toy <- function(n = 2500, x_min = -2, x_max = 2, c = 0, tau = 1) {
+  X <- runif(n, x_min, x_max)
+  D <- as.numeric(X >= c)  # SRD: deterministic assignment at the cutoff
+
+  f <- function(x) 2 + 0.6 * x + 0.5 * sin(2 * x)  # smooth baseline
+  eps <- rnorm(n, mean = 0, sd = 0.6)
+
+  Y0 <- f(X) + eps
+  Y1 <- f(X) + tau + eps
+  Y <- ifelse(D == 1, Y1, Y0)
+
+  # Extra covariate (for continuity/balance demo): smooth in X, no jump at c
+  Z <- 0.4 * X + rnorm(n, 0, 1)
+
+  data.frame(Y = Y, D = D, X = X, Z = Z)
+}
+
+rd_ll_uniform <- function(df, c = 0, h = 0.5, y = "Y", x = "X") {
+  xv <- df[[x]]
+  yv <- df[[y]]
+
+  left <- (xv < c) & (xv >= c - h)
+  right <- (xv >= c) & (xv <= c + h)
+
+  fit_l <- lm(yv[left] ~ I(xv[left] - c))
+  fit_r <- lm(yv[right] ~ I(xv[right] - c))
+
+  a_l <- coef(fit_l)[1]
+  a_r <- coef(fit_r)[1]
+
+  list(
+    tau_hat = unname(a_r - a_l),
+    a_l = unname(a_l),
+    a_r = unname(a_r),
+    n_l = sum(left),
+    n_r = sum(right),
+    fit_l = fit_l,
+    fit_r = fit_r
+  )
+}
+
+rd_bin_means <- function(df, c = 0, binwidth = 0.1, x_min = -2, x_max = 2) {
+  x <- df$X
+  y <- df$Y
+
+  breaks_l <- seq(x_min, c, by = binwidth)
+  breaks_r <- seq(c, x_max, by = binwidth)
+
+  bins_l <- cut(x[x < c], breaks = breaks_l, include.lowest = TRUE, right = FALSE)
+  bins_r <- cut(x[x >= c], breaks = breaks_r, include.lowest = TRUE, right = FALSE)
+
+  mean_l <- tapply(y[x < c], bins_l, mean)
+  mean_r <- tapply(y[x >= c], bins_r, mean)
+
+  mid_l <- head(breaks_l, -1) + binwidth / 2
+  mid_r <- head(breaks_r, -1) + binwidth / 2
+
+  keep_l <- !is.na(mean_l)
+  keep_r <- !is.na(mean_r)
+
+  list(
+    x_l = mid_l[keep_l], y_l = as.numeric(mean_l[keep_l]),
+    x_r = mid_r[keep_r], y_r = as.numeric(mean_r[keep_r])
+  )
+}
+
+toy <- rd_make_toy()
+true_tau_at_c <- 1
+
+rd_make_toy_frd <- function(n = 2500, x_min = -2, x_max = 2, c = 0, tau = 1) {
+  X <- runif(n, x_min, x_max)
+  Z <- as.numeric(X >= c)  # eligibility at cutoff (instrument)
+
+  # Imperfect compliance: treatment probability shifts at c but is not 0/1.
+  p <- pmin(pmax(0.20 + 0.55 * Z + 0.05 * (X - c), 0.02), 0.98)
+  D <- rbinom(n, size = 1, prob = p)
+
+  f <- function(x) 2 + 0.6 * x + 0.5 * sin(2 * x)  # smooth baseline
+  eps <- rnorm(n, mean = 0, sd = 0.6)
+
+  Y0 <- f(X) + eps
+  Y1 <- f(X) + tau + eps
+  Y <- ifelse(D == 1, Y1, Y0)
+
+  data.frame(Y = Y, D = D, X = X, Z = Z)
+}
+
+toy_frd <- rd_make_toy_frd()
+
+did_make_toy <- function(n_per_group = 400, t_vals = 0:5, t0 = 3, rho = 0.6) {
+  t_vals <- as.integer(t_vals)
+  n_t <- length(t_vals)
+  n_units <- 2 * n_per_group
+
+  id_unit <- seq_len(n_units)
+  id <- rep(id_unit, each = n_t)
+  t <- rep(t_vals, times = n_units)
+  group <- rep(rep(c("control", "treated"), each = n_per_group), each = n_t)
+
+  treated <- as.numeric(group == "treated")
+  post <- as.numeric(t >= t0)
+  D <- treated * post
+
+  # Unit effects induce serial correlation concerns in naive DiD SEs.
+  alpha_i_unit <- rnorm(n_units, mean = 0, sd = 1.0)
+  alpha_i <- rep(alpha_i_unit, each = n_t)
+
+  # AR(1) shock within unit (simple construction; sigma scaled to keep Var ~ 1).
+  eps <- numeric(length(id))
+  for (u in id_unit) {
+    idx <- which(id == u)
+    e <- numeric(n_t)
+    e[1] <- rnorm(1, 0, 1)
+    for (j in 2:n_t) {
+      e[j] <- rho * e[j - 1] + rnorm(1, 0, sqrt(1 - rho^2))
+    }
+    eps[idx] <- e
+  }
+
+  level_gap <- 0.8 * treated
+  common_trend <- 0.30 * t
+
+  # Dynamic treatment effect post (keeps parallel trends in levels under no treatment).
+  te <- 1.2 + 0.2 * pmax(0, t - t0)
+
+  Y0 <- 2.0 + level_gap + common_trend + alpha_i + eps
+  Y <- Y0 + D * te
+
+  data.frame(id = id, t = t, group = group, treated = treated, post = post, D = D, Y = Y)
+}
+
+did_toy <- did_make_toy()
+
+did_make_staggered_toy <- function(
+  n_per_group = 250,
+  t_vals = 0:7,
+  g_early = 3,
+  g_late = 5,
+  rho = 0.6
+) {
+  t_vals <- as.integer(t_vals)
+  n_t <- length(t_vals)
+
+  groups <- c("never", "early", "late")
+  n_units <- length(groups) * n_per_group
+  id_unit <- seq_len(n_units)
+
+  id <- rep(id_unit, each = n_t)
+  t <- rep(t_vals, times = n_units)
+  group <- rep(rep(groups, each = n_per_group), each = n_t)
+
+  G_unit <- ifelse(group == "early", g_early, ifelse(group == "late", g_late, Inf))
+  G <- as.numeric(G_unit)
+  D <- as.numeric(t >= G_unit)
+
+  # Unit effects + AR(1) within-unit shocks (so serial correlation is present).
+  alpha_i_unit <- rnorm(n_units, mean = 0, sd = 1.0)
+  alpha_i <- rep(alpha_i_unit, each = n_t)
+
+  eps <- numeric(length(id))
+  for (u in id_unit) {
+    idx <- which(id == u)
+    e <- numeric(n_t)
+    e[1] <- rnorm(1, 0, 1)
+    for (j in 2:n_t) {
+      e[j] <- rho * e[j - 1] + rnorm(1, 0, sqrt(1 - rho^2))
+    }
+    eps[idx] <- e
+  }
+
+  # Common trend + group level gaps (parallel trends in untreated outcomes).
+  level_gap <- ifelse(group == "early", 0.6, ifelse(group == "late", 0.2, 0.0))
+  common_trend <- 0.25 * t
+
+  # Heterogeneous dynamic treatment effects by cohort:
+  te_base <- ifelse(group == "early", 1.8, ifelse(group == "late", 0.8, 0.0))
+  event_time <- t - G
+  te_dyn <- te_base + 0.15 * pmax(0, event_time) + 0.10 * pmax(0, event_time)^2
+  te <- ifelse(D == 1, te_dyn, 0.0)
+
+  Y0 <- 2.0 + level_gap + common_trend + alpha_i + eps
+  Y <- Y0 + te
+
+  data.frame(
+    id = id,
+    t = t,
+    group = group,
+    G = G,
+    D = D,
+    event_time = event_time,
+    te_true = te_dyn,
+    Y = Y
+  )
+}
+
+did_stag <- did_make_staggered_toy()
+@
+
+%-------------------------------------------------------------------------------%
+\frame{\titlepage \thispagestyle{empty}}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Roadmap}
+\begin{wideitemize}
+\item Part A (catch-up): regression discontinuity (RD)
+\item Part B: differences in differences (DiD) and panel-data designs (next)
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Potential outcomes as functions of \(X\)}
+\small
+Think of the average potential outcomes as smooth regression functions:
+\[
+m_0(x)\equiv \E[Y_i(0)\mid X_i=x],\qquad
+m_1(x)\equiv \E[Y_i(1)\mid X_i=x].
+\]\pause
+The (conditional) average treatment effect at a point \(x^\star\) is
+\[
+\tau(x^\star)\equiv \E[Y_i(1)-Y_i(0)\mid X_i=x^\star]=m_1(x^\star)-m_0(x^\star).
+\]
+
+<<potential-outcomes-picture, echo=FALSE, fig=TRUE, height=3.2, width=7.5>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  x <- seq(0, 10, length.out = 400)
+  x_star <- 6
+
+  m0 <- function(x) 0.45 * x + 1.2 * sin(x / 1.6) + 0.2
+  tau_x <- function(x) 1.6 + 0.35 * sin((x - 1.5) / 1.3) + 0.08 * (x - 5)
+  m1 <- function(x) m0(x) + tau_x(x)
+
+  df <- rbind(
+    data.frame(x = x, y = m0(x), curve = "m0(x) = E[Y(0) | X=x]"),
+    data.frame(x = x, y = m1(x), curve = "m1(x) = E[Y(1) | X=x]")
+  )
+
+  df_tau <- data.frame(
+    x = x_star,
+    y0 = m0(x_star),
+    y1 = m1(x_star),
+    tau = m1(x_star) - m0(x_star)
+  )
+
+  ggplot(df, aes(x, y, color = curve)) +
+    geom_line(linewidth = 0.8) +
+    geom_vline(xintercept = x_star, linewidth = 0.4, color = "gray40") +
+    geom_segment(
+      data = df_tau,
+      aes(x = x, xend = x, y = y0, yend = y1),
+      inherit.aes = FALSE,
+      linewidth = 0.8
+    ) +
+    annotate(
+      "text",
+      x = x_star + 0.15,
+      y = (df_tau$y0 + df_tau$y1) / 2,
+      label = sprintf("tau(x*) = %.2f", df_tau$tau),
+      hjust = 0,
+      size = 3.6
+    ) +
+    labs(x = "Covariate X", y = NULL) +
+    theme_classic(base_size = 12) +
+    theme(
+      strip.background = element_blank(),
+      strip.text.y = element_text(angle = 0, hjust = 0),
+      plot.margin = margin(4, 4, 4, 4)
+    ) + 
+    scale_color_manual(values = c("m0(x) = E[Y(0) | X=x]" = "steelblue", 
+                                  "m1(x) = E[Y(1) | X=x]" = "firebrick"))
+
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{RD setup (Imbens--Lemieux notation)}
+\small
+We observe \((Y_i, D_i, X_i)\), where \(X_i\) is the forcing variable and \(D_i\in\{0,1\}\) is treatment/receipt.\pause
+
+\begin{wideitemize}
+\item Cutoff: \(c\).\pause
+\item Core comparison: units just below vs.\ just above \(c\) (\emph{local}).\pause
+\item \textbf{Sharp RD (SRD):} \(D_i=\one\{X_i\ge c\}\).\pause
+\item \textbf{Fuzzy RD (FRD):} \(\Pr[D_i=1\mid X_i=x]\) jumps at \(c\), but not from 0 to 1.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\pause
+FRD is a local IV design: crossing the cutoff shifts treatment probability.
+
+\vspace{0.25em}
+\scriptsize
+Many notes re-center the forcing variable so the cutoff is 0: define \(V_i\equiv X_i-c\). We mainly write \(X_i\) and \(c\).
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Motivation pictures: assignment and regression functions}
+\small
+In SRD, the treatment probability jumps from 0 to 1 at the cutoff, so the observed outcome regression function inherits a jump.\pause
+
+<<rd-motivation-pictures, echo=FALSE, fig=TRUE, height=5.2, width=8>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  c0 <- 6
+  x <- seq(0, 10, length.out = 400)
+
+  # Smooth potential outcome regression functions (continuous at c0)
+  m0 <- function(x) 0.45 * x + 1.2 * sin(x / 1.6) + 0.2
+  # Heterogeneous treatment effects: tau(x) varies with x
+  tau_x <- function(x) 1.6 + 0.35 * sin((x - 1.5) / 1.3) + 0.08 * (x - 5)
+  m1 <- function(x) m0(x) + tau_x(x)
+
+  # SRD assignment probability and observed regression function under SRD
+  p_srd <- ifelse(x < c0, 0, 1)
+  m_obs <- ifelse(x < c0, m0(x), m1(x))
+
+  panel1 <- "Fig. 1. Assignment probabilities (SRD)."
+  panel2 <- "Fig. 2. Potential and observed outcome regression functions."
+
+  df_assign <- data.frame(panel = panel1, x = x, y = p_srd)
+
+  df_potential <- rbind(
+    data.frame(panel = panel2, x = x, y = m0(x), curve = "Y(0)"),
+    data.frame(panel = panel2, x = x, y = m1(x), curve = "Y(1)")
+  )
+  df_potential$source <- "Potential"
+
+  df_obs <- data.frame(panel = panel2, x = x, y = m_obs, source = "Observed")
+
+  df_jump <- data.frame(panel = panel2, x = c0, y0 = m0(c0), y1 = m1(c0))
+
+  p <- ggplot() +
+    geom_vline(xintercept = c0, linewidth = 0.5, color = "gray35") +
+    geom_step(data = df_assign, aes(x, y), linewidth = 0.7, color = "black") +
+    geom_line(
+      data = df_potential,
+      aes(x, y, group = curve, linetype = source),
+      linewidth = 0.6,
+      color = "black"
+    ) +
+    geom_line(
+      data = df_obs,
+      aes(x, y, linetype = source),
+      linewidth = 0.8,
+      color = "black"
+    ) +
+    geom_segment(
+      data = df_jump,
+      aes(x = x, xend = x, y = y0, yend = y1),
+      linewidth = 0.6,
+      color = "black"
+    ) +
+    facet_grid(panel ~ ., scales = "free_y") +
+    scale_linetype_manual(values = c(Potential = "22", Observed = "solid")) +
+    labs(x = "Forcing variable X", y = NULL) +
+    guides(linetype = guide_legend(title = NULL)) +
+    theme_classic(base_size = 12) +
+    theme(
+      strip.background = element_blank(),
+      strip.text.y = element_text(angle = 0, hjust = 0),
+      legend.position = "bottom",
+      panel.spacing = grid::unit(0.7, "lines")
+    )
+
+  print(p)
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Motivating FRD: imprecise sorting and imperfect compliance}
+\small
+Often there is a cutoff-based \textbf{eligibility rule} but \textbf{treatment receipt is imperfect}.\pause
+
+\begin{wideitemize}
+\item Define eligibility (the instrument): \(Z_i=\one\{X_i\ge c\}\).\pause
+\item With imprecise sorting / imperfect enforcement / imperfect take-up, \(D_i\) does not equal \(Z_i\) for everyone.\pause
+\item Then \(\Pr[D_i=1\mid X_i=x]\) still has a \emph{jump} at \(c\), but not from 0 to 1 (fuzzy RD).\pause
+\end{wideitemize}
+
+<<rd-fuzzy-imprecise-sorting, echo=FALSE, fig=TRUE, height=3.4, width=8>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  c0 <- 6
+  xg <- seq(0, 10, length.out = 400)
+
+  # A simple FRD "first stage": probability shifts at c0 but is not 0/1.
+  p_frd <- pmin(pmax(0.12 + 0.03 * (xg - 5) + 0.55 * (xg >= c0), 0.02), 0.98)
+  df_p <- data.frame(panel = "Pr(D=1 | X=x)", x = xg, p = p_frd)
+
+  # Simulated receipt showing treated on both sides due to imperfect compliance.
+  n <- 900
+  xs <- runif(n, 0, 10)
+  ps <- pmin(pmax(0.12 + 0.03 * (xs - 5) + 0.55 * (xs >= c0), 0.02), 0.98)
+  ds <- rbinom(n, size = 1, prob = ps)
+  df_s <- data.frame(panel = "Observed receipt D", x = xs, d = ds)
+
+  ggplot() +
+    geom_vline(xintercept = c0, linewidth = 0.5, color = "gray35") +
+    geom_step(data = df_p, aes(x, p), linewidth = 0.8, color = "black") +
+    geom_point(
+      data = df_s,
+      aes(x, d),
+      alpha = 0.35,
+      size = 1.1,
+      position = position_jitter(height = 0.06, width = 0)
+	    ) +
+	    facet_grid(panel ~ ., scales = "free_y") +
+	    scale_y_continuous(limits = c(-0.12, 1.12), breaks = c(0, 0.5, 1)) +
+	    labs(x = "Forcing variable X", y = NULL) +
+	    theme_classic(base_size = 12) +
+	    theme(
+	      strip.background = element_blank(),
+      strip.text.y = element_text(angle = 0, hjust = 0),
+      panel.spacing = grid::unit(0.7, "lines")
+    )
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{RD assumptions (sufficient conditions, in our notation)}
+\small
+We observe \((Y_i, D_i, X_i)\), where \(X_i\) is the forcing variable and \(D_i\in\{0,1\}\) is treatment/receipt.\pause
+
+\begin{wideitemize}
+\item \textbf{SUTVA:} \(Y_i = Y_i(1)\cdot D_i + Y_i(0)\cdot (1-D_i)\).\pause
+\item \textbf{Continuity of potential-outcome CEFs at the cutoff:} for \(d\in\{0,1\}\),
+\[
+\lim_{\ell\downarrow 0}\E[Y_i(d)\mid X_i=c+\ell]
+=\lim_{\ell\downarrow 0}\E[Y_i(d)\mid X_i=c-\ell]
+=\E[Y_i(d)\mid X_i=c].
+\]\pause
+\item \textbf{Density/positivity near the cutoff:} \(f_X\) is continuous at \(c\) and \(f_X(c)>0\) (so there are observations arbitrarily close to \(c\) on both sides).\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\scriptsize
+Strictly speaking, continuity of \(f_X\) is not required for identification, but it is often a useful (and checkable) diagnostic: big density changes can signal sorting/manipulation.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{SRD identification: the jump equals the ATE at the cutoff}
+\small
+Define the SRD estimand (Imbens--Lemieux):
+\[
+\tau_{SRD}\equiv \E\!\left[Y_i(1)-Y_i(0)\mid X_i=c\right].
+\]\pause
+
+\vspace{0.25em}
+In \textbf{sharp RD}, \(D_i=\one\{X_i\ge c\}\). Using SUTVA and continuity at \(c\):\pause
+\begin{align*}
+&\lim_{\ell\downarrow 0}\E[Y_i\mid X_i=c+\ell]-\lim_{\ell\downarrow 0}\E[Y_i\mid X_i=c-\ell] \\
+&= \lim_{\ell\downarrow 0}\E\!\left[Y_i(1)\mid X_i=c+\ell\right]-\lim_{\ell\downarrow 0}\E\!\left[Y_i(0)\mid X_i=c-\ell\right] \\
+&= \E\!\left[Y_i(1)\mid X_i=c\right]-\E\!\left[Y_i(0)\mid X_i=c\right] \\
+&= \E\!\left[Y_i(1)-Y_i(0)\mid X_i=c\right] \\
+&\equiv \tau_{SRD}.
+\end{align*}
+
+\vspace{0.25em}
+\pause
+\textbf{Interpretation:} the jump in \(\E[Y\mid X=x]\) at \(x=c\) equals the ATE for units at the cutoff.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Simulated toy RD: raw data}
+\small
+Before smoothing or binning, the data are noisy: you cannot read the jump off of individual points.\pause
+
+<<rd-toy-raw, echo=FALSE, fig=TRUE, height=3.2, width=7>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  ggplot(toy, aes(x = X, y = Y, color = factor(D))) +
+    geom_vline(xintercept = 0, linewidth = 0.5, color = "gray35") +
+    geom_point(alpha = 0.25, size = 1) +
+    scale_color_manual(values = c("0" = "gray40", "1" = "gray40")) +
+    labs(x = "Forcing variable X", y = "Outcome Y") +
+    theme_classic(base_size = 12) +
+    theme(legend.position = "none")
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Step 1 in practice: a binned scatter plot}
+\small
+Plot bin means of \(Y\) against \(X\), separately on each side of the cutoff (do not smooth across \(c\)).\pause
+
+\vspace{0.25em}
+If the plot shows many jumps of similar size away from \(c\), interpreting the jump at \(c\) as causal is harder.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Simulated toy RD: binned means}
+\small
+By construction, the true cutoff effect is \(\tau_{SRD}=1\) in this toy example.\pause
+
+<<rd-toy-bins, echo=FALSE, fig=TRUE, height=3.2, width=7>>=
+bm <- rd_bin_means(toy, c = 0, binwidth = 0.1, x_min = -2, x_max = 2)
+
+df_bins <- rbind(
+  data.frame(side = "Left of c", x = bm$x_l, y = bm$y_l),
+  data.frame(side = "Right of c", x = bm$x_r, y = bm$y_r)
+)
+
+suppressPackageStartupMessages(library(ggplot2))
+
+ggplot(df_bins, aes(x = x, y = y)) +
+  geom_vline(xintercept = 0, linewidth = 0.6, color = "firebrick") +
+  geom_point(size = 1.5, alpha = 0.8, color = "gray35") +
+  annotate("text", x = 0.05, y = max(df_bins$y), label = "cutoff c", hjust = 0, vjust = 1, color = "firebrick", size = 3.4) +
+  coord_cartesian(xlim = c(-2, 2)) +
+  labs(
+    x = "Forcing variable X",
+    y = "Mean outcome in bin",
+    title = "Binned means (no smoothing across the cutoff)"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(plot.title = element_text(size = 11))
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Estimation: local linear regression at a boundary}
+\small
+Imbens--Lemieux recommendation: local linear regression, fit separately on each side using only \(|X_i-c|\le h\).\pause
+
+\begin{wideitemize}
+\item With a uniform kernel, this is ``OLS within bandwidth \(h\)'' on each side.\pause
+\item Estimate \(\hat\tau(h)\) as the difference between the fitted intercepts at \(c\).\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\textbf{Key practice point:} report robustness to multiple bandwidths.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Toy RD: local linear fit for one bandwidth}
+\small
+Example with bandwidth \(h=0.5\): fit a line to \(Y\) vs.\ \((X-c)\) on each side using only \(|X-c|\le h\).\pause
+
+<<rd-toy-ll-one, echo=FALSE, fig=TRUE, height=3.2, width=7>>=
+h <- 0.5
+ll <- rd_ll_uniform(toy, c = 0, h = h, y = "Y", x = "X")
+bm <- rd_bin_means(toy, c = 0, binwidth = 0.1, x_min = -2, x_max = 2)
+
+df_bins <- rbind(
+  data.frame(side = "Left of c", x = bm$x_l, y = bm$y_l),
+  data.frame(side = "Right of c", x = bm$x_r, y = bm$y_r)
+)
+
+grid_l <- seq(-h, 0, length.out = 50)
+grid_r <- seq(0, h, length.out = 50)
+
+df_fit <- rbind(
+  data.frame(side = "Left fit", x = grid_l, y = ll$a_l + coef(ll$fit_l)[2] * grid_l),
+  data.frame(side = "Right fit", x = grid_r, y = ll$a_r + coef(ll$fit_r)[2] * grid_r)
+)
+
+note <- sprintf("tau_hat(h)=%.3f\nN_left=%d, N_right=%d", ll$tau_hat, ll$n_l, ll$n_r)
+y_note <- max(c(df_bins$y, df_fit$y))
+
+suppressPackageStartupMessages(library(ggplot2))
+
+ggplot() +
+  geom_vline(xintercept = 0, linewidth = 0.6, color = "firebrick") +
+  geom_point(data = df_bins, aes(x = x, y = y), size = 1.4, alpha = 0.75, color = "gray45") +
+  geom_line(data = df_fit, aes(x = x, y = y), linewidth = 1.1, color = "navy") +
+  annotate("text", x = -1.95, y = y_note, label = note, hjust = 0, vjust = 1, size = 3.3) +
+  coord_cartesian(xlim = c(-2, 2)) +
+  labs(
+    x = "X",
+    y = "Mean Y in bin",
+    title = sprintf("Local linear (uniform kernel), bandwidth h = %.2f", h)
+  ) +
+  theme_classic(base_size = 12) +
+  theme(plot.title = element_text(size = 11))
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Toy RD: bandwidth sensitivity}
+\small
+Compute \(\hat\tau(h)\) for a range of bandwidths \(h\).\pause
+
+\vspace{0.25em}
+Data-driven ``optimal'' bandwidth selectors are useful, but you should still report sensitivity; see Imbens and Kalyanaraman (2012).\pause
+
+<<rd-toy-bandwidth, echo=FALSE, fig=TRUE, height=3.2, width=7>>=
+hs <- c(0.15, 0.25, 0.4, 0.6, 0.8, 1.0)
+ests <- sapply(hs, function(h) rd_ll_uniform(toy, c = 0, h = h)$tau_hat)
+
+df_bw <- data.frame(h = hs, tau_hat = as.numeric(ests))
+
+suppressPackageStartupMessages(library(ggplot2))
+
+ggplot(df_bw, aes(x = h, y = tau_hat)) +
+  geom_hline(yintercept = true_tau_at_c, linewidth = 0.7, linetype = "22", color = "firebrick") +
+  geom_line(linewidth = 0.9, color = "gray20") +
+  geom_point(size = 2.0, color = "gray20") +
+  annotate("text", x = max(df_bw$h), y = true_tau_at_c, label = "true tau=1", vjust = -0.8, hjust = 1, color = "firebrick", size = 3.4) +
+  labs(
+    x = "Bandwidth h",
+    y = "Estimated jump tau_hat(h)",
+    title = "Sensitivity of the RD estimate to bandwidth choice"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(plot.title = element_text(size = 11))
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Diagnostics: what to check (Imbens--Lemieux)}
+\small
+\begin{wideitemize}
+\item \textbf{Manipulation/sorting:} does the density of \(X\) jump at \(c\)? (McCrary test)\pause
+\item \textbf{Covariate continuity:} do predetermined covariates jump at \(c\)?\pause
+\item \textbf{Placebo cutoffs:} do you see similar jumps at other values?\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\textbf{Interpretation:} these checks probe whether ``just below vs.\ just above \(c\)'' is a credible comparison.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Toy RD diagnostics: density and covariate balance}
+\small
+In the toy DGP there is no manipulation by construction, and the extra covariate \(Z\) is smooth in \(X\).\pause
+
+<<rd-toy-diag, echo=FALSE, fig=TRUE, height=3.2, width=7>>=
+bmz <- rd_bin_means(transform(toy, Y = Z), c = 0, binwidth = 0.1, x_min = -2, x_max = 2)
+
+df_z <- rbind(
+  data.frame(panel = "Predetermined covariate Z", x = bmz$x_l, y = bmz$y_l),
+  data.frame(panel = "Predetermined covariate Z", x = bmz$x_r, y = bmz$y_r)
+)
+
+toy_hist <- transform(toy, panel = "Density of X (toy)")
+
+suppressPackageStartupMessages(library(ggplot2))
+
+ggplot() +
+  geom_vline(xintercept = 0, linewidth = 0.6, color = "firebrick") +
+  geom_histogram(
+    data = toy_hist,
+    aes(x = X),
+    bins = 40,
+    fill = "gray80",
+    color = "white"
+  ) +
+  geom_point(
+    data = df_z,
+    aes(x = x, y = y),
+    size = 1.3,
+    alpha = 0.8,
+    color = "gray40"
+  ) +
+  facet_grid(panel ~ ., scales = "free_y") +
+  coord_cartesian(xlim = c(-2, 2)) +
+  labs(x = "X", y = NULL) +
+  theme_classic(base_size = 12) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.y = element_text(angle = 0, hjust = 0),
+    panel.spacing = grid::unit(0.7, "lines")
+  )
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{RD in practice: general recommendations (Imbens--Lemieux style)}
+\small
+\textbf{Local linear within a bandwidth:} estimate the jump at the cutoff by OLS on units with \(|X_i-c|<h\):\pause
+\[
+Y_i
+=
+\alpha_0+\tau\cdot D_i+\beta_1(X_i-c)+\beta_2 D_i(X_i-c)+\varepsilon_i.
+\]
+\pause
+With a uniform (rectangular) kernel, this is local linear regression at a boundary; \(\hat\tau\) estimates the cutoff jump.\pause
+
+\begin{wideitemize}
+\item \textbf{Bandwidth choice:} use a data-driven ``optimal'' bandwidth (Imbens and Kalyanaraman, 2012), but still report sensitivity across multiple \(h\)'s.\pause
+\item \textbf{Inference:} use robust standard errors (or the bootstrap); show the estimated CEF within the bandwidth.\pause
+\item \textbf{Robustness:} report estimates varying polynomial order/specification and bandwidth.\pause
+\item \textbf{Diagnostics:} test continuity of predetermined covariates and of the density/PDF of \(X\) at \(c\) (McCrary-type check).\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{RD robustness: specification tests (what to report)}
+\small
+Assess robustness by checking whether the ``local comparison'' story is supported in the data:\pause
+
+\begin{wideitemize}
+\item \textbf{Covariate continuity:} look for jumps in predetermined covariates at \(c\).\pause
+\item \textbf{Density continuity:} test for discontinuities in the conditional density of \(X\) at \(c\) (sorting/manipulation).\pause
+\item \textbf{Placebo cutoffs:} check whether \(\E[Y\mid X=x]\) shows discontinuities at other values of \(x\).\pause
+\item \textbf{Bandwidth + specification sensitivity:} vary \(h\) and the functional form, and report estimates \emph{with and without} additional covariates (as precision adjustment).\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Case 2: fuzzy RD (FRD) designs --- practical workflow}
+\small
+FRD adds one key complication: treatment receipt \(D_i\) is not perfectly determined by eligibility \(Z_i=\one\{X_i\ge c\}\).\pause
+
+\begin{wideitemize}
+\item \textbf{Graphs:} make the binned outcome plot \emph{and} graph \(\Pr(D_i=1\mid X_i=x)\) (first stage) near \(c\).\pause
+\item \textbf{Estimation:} estimate \(\tau_{FRD}\) using TSLS (numerically equivalent to the local Wald ratio \(\Delta_Y/\Delta_D\)).\pause
+\item \textbf{Inference:} use robust TSLS standard errors (or bootstrap); a plug-in approach is another option.\pause
+\item \textbf{Bandwidth:} choose an ``optimal'' bandwidth as a starting point (IK 2012 / modified CV ideas), and still report sensitivity.\pause
+\item \textbf{Robustness:} apply the SRD specification tests; also compare the FRD estimate to standard unconfoundedness-based estimates as a sanity check.\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Toy FRD: binned outcomes and treatment probability}
+\small
+In FRD, it is helpful to plot the reduced-form jump in \(Y\) \emph{and} the first-stage jump in \(D\).\pause
+
+<<frd-toy-bins, echo=FALSE, fig=TRUE, height=4.0, width=8>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  bm_y <- rd_bin_means(toy_frd, c = 0, binwidth = 0.1, x_min = -2, x_max = 2)
+  bm_d <- rd_bin_means(transform(toy_frd, Y = D), c = 0, binwidth = 0.1, x_min = -2, x_max = 2)
+
+  df_y <- rbind(
+    data.frame(panel = "Binned mean of outcome Y", x = bm_y$x_l, y = bm_y$y_l),
+    data.frame(panel = "Binned mean of outcome Y", x = bm_y$x_r, y = bm_y$y_r)
+  )
+
+  df_d <- rbind(
+    data.frame(panel = "Binned Pr(D=1 | X in bin)", x = bm_d$x_l, y = bm_d$y_l),
+    data.frame(panel = "Binned Pr(D=1 | X in bin)", x = bm_d$x_r, y = bm_d$y_r)
+  )
+
+  df_plot <- rbind(df_y, df_d)
+
+  ggplot(df_plot, aes(x = x, y = y)) +
+    geom_vline(xintercept = 0, linewidth = 0.5, color = "gray35") +
+    geom_point(size = 1.2, alpha = 0.7, color = "gray30") +
+    facet_grid(panel ~ ., scales = "free_y") +
+    labs(x = "Forcing variable X (cutoff at 0)", y = NULL) +
+    theme_classic(base_size = 12) +
+    theme(
+      strip.background = element_blank(),
+      strip.text.y = element_text(angle = 0, hjust = 0),
+      panel.spacing = grid::unit(0.7, "lines")
+    )
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Fuzzy RD: the local Wald estimand}
+\scriptsize
+Define outcome and treatment jumps at the cutoff:\pause
+\[
+\Delta_Y=\lim_{x\downarrow c}\E[Y\mid X=x]-\lim_{x\uparrow c}\E[Y\mid X=x],
+\]
+\[
+\Delta_D=\lim_{x\downarrow c}\E[D\mid X=x]-\lim_{x\uparrow c}\E[D\mid X=x].
+\]
+\pause
+Then the fuzzy RD estimand is the local Wald ratio:
+\[
+\tau_{FRD}=\frac{\Delta_Y}{\Delta_D}.
+\]
+
+\vspace{0.25em}
+\pause
+Equivalently, written directly in terms of the limits:
+\[
+\tau_{FRD}
+=
+\frac{
+\lim_{x\downarrow c}\E[Y\mid X=x]-\lim_{x\uparrow c}\E[Y\mid X=x]
+}{
+\lim_{x\downarrow c}\E[D\mid X=x]-\lim_{x\uparrow c}\E[D\mid X=x]
+}.
+\]
+
+
+\vspace{0.25em}
+\pause
+\textbf{Note:} in FRD, treatment receipt can be endogenous, so it is \emph{not} generally true that
+\[
+\E\!\left[Y_i(d)\mid D_i=d,\ X_i=x\right]=\E\!\left[Y_i(d)\mid X_i=x\right].
+\]
+\pause
+This equality would follow under an unconfoundedness-type assumption, but FRD identification of causal effects does not require it.\pause
+
+\vspace{0.25em}
+\pause
+Under additional assumptions (monotonicity + exclusion-type conditions), \(\tau_{FRD}\) is a LATE for compliers at the cutoff:
+\[
+\tau_{FRD}
+=
+\E\!\left[Y_i(1)-Y_i(0)\mid \text{unit \(i\) is a complier},\ X_i=c\right].
+\]
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{FRD monotonicity and compliance types (RD analog of IV)}
+\small
+To interpret FRD as a LATE, it is useful to define potential treatment status under \emph{counterfactual cutoff values}.\pause
+
+\begin{wideitemize}
+\item Let \(D_i(c')\in\{0,1\}\) denote whether unit \(i\) would be treated if the cutoff were set to \(c'\) (keeping the unit's forcing value \(X_i\) fixed).\pause
+\item \textbf{Monotonicity at the cutoff (Imbens--Lemieux):} \(D_i(c')\) is non-increasing in \(c'\) at \(c'=c\).\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\pause
+Define \textbf{compliance status} by how \(D_i(c')\) changes as the cutoff crosses the unit's \(X_i\):\pause
+\begin{itemize}
+\item \textbf{Complier:} \(\lim_{c'\downarrow X_i} D_i(c')=0\) and \(\lim_{c'\uparrow X_i} D_i(c')=1\).\pause
+\item \textbf{Never-taker:} \(\lim_{c'\downarrow X_i} D_i(c')=0\) and \(\lim_{c'\uparrow X_i} D_i(c')=0\).\pause
+\item \textbf{Always-taker:} \(\lim_{c'\downarrow X_i} D_i(c')=1\) and \(\lim_{c'\uparrow X_i} D_i(c')=1\).\pause
+\item \textbf{Defier:} \(\lim_{c'\downarrow X_i} D_i(c')=1\) and \(\lim_{c'\uparrow X_i} D_i(c')=0\).\pause
+\end{itemize}
+
+\vspace{0.25em}
+\pause
+\scriptsize
+Interpretation (with the usual assignment direction \(D=\one\{X\ge c\}\)): if the cutoff is set just \emph{below} \(X_i\), unit \(i\) is treated; if the cutoff is set just \emph{above} \(X_i\), unit \(i\) is not treated. Under monotonicity, there are no ``defiers'' (units whose treatment would increase when the cutoff is raised).
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{transitionframe}
+\centering
+\color{white}
+\Large Next: differences in differences (DiD) and panel data
+\end{transitionframe}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{DiD setup: two groups, two periods}
+\small
+DiD uses changes over time plus a comparison group.\pause
+
+\begin{wideitemize}
+\item Groups: \(G_i\in\{0,1\}\) (1 = treated group, 0 = comparison group)\pause
+\item Time: \(t\in\{0,1\}\) (0 = pre, 1 = post)\pause
+\item Treatment: \(D_{it}=\one\{G_i=1\}\cdot \one\{t=1\}\) (2x2 case)\pause
+\item Potential outcomes: \(Y_{it}(1),Y_{it}(0)\), observed \(Y_{it}=Y_{it}(D_{it})\)\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{2x2 DiD estimand}
+\small
+The DiD estimand is the difference in average changes:
+\[
+\begin{aligned}
+\tau_{DiD}
+\equiv\;&
+\Big(\E[Y\mid G=1,t=1]-\E[Y\mid G=1,t=0]\Big)\\
+&-\Big(\E[Y\mid G=0,t=1]-\E[Y\mid G=0,t=0]\Big).
+\end{aligned}
+\]\pause
+
+\vspace{0.25em}
+Interpretation: remove (i) time shocks common to both groups and (ii) time-invariant level differences between groups.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{DiD picture: noisy raw data vs.\ group means}
+\small
+Raw panel data are noisy; DiD is about \emph{average} changes (thick lines show the expected group means in a toy DGP with parallel pre-trends).\pause
+
+<<did-toy-plot, echo=FALSE, fig=TRUE, height=3.4, width=7.5>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  # Use the toy DGP's expected means (so the pre-trends are exactly parallel in the figure).
+  t0 <- 3
+  t_vals <- sort(unique(did_toy$t))
+  gmeans <- expand.grid(t = t_vals, group = c("control", "treated"))
+  gmeans$treated <- as.numeric(gmeans$group == "treated")
+  gmeans$post <- as.numeric(gmeans$t >= t0)
+  gmeans$D <- gmeans$treated * gmeans$post
+
+  level_gap <- 0.8 * gmeans$treated
+  common_trend <- 0.30 * gmeans$t
+  te <- 1.2 + 0.2 * pmax(0, gmeans$t - t0)
+
+  gmeans$Y <- 2.0 + level_gap + common_trend + gmeans$D * te
+
+  ggplot(did_toy, aes(x = t, y = Y)) +
+    geom_vline(xintercept = t0, linewidth = 0.5, color = "gray35") +
+    geom_point(alpha = 0.03, size = 0.7, color = "gray40") +
+    geom_line(
+      data = gmeans,
+      aes(x = t, y = Y, color = group, group = group),
+      linewidth = 1.2
+    ) +
+    scale_color_manual(values = c(control = "gray20", treated = "firebrick")) +
+    labs(x = "Time t", y = "Outcome Y") +
+    theme_classic(base_size = 12) +
+    theme(legend.position = "bottom", legend.title = element_blank())
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{2x2 DiD as a regression}
+\small
+In the 2x2 case, the DiD estimator equals the coefficient on the interaction term in:
+\[
+Y_{it}=\alpha+\gamma\,G_i+\lambda\,\text{Post}_t+\tau\,(G_i\cdot \text{Post}_t)+\varepsilon_{it},
+\]
+where \(\text{Post}_t\equiv \one\{t=1\}\).\pause
+
+\vspace{0.25em}
+\begin{wideitemize}
+\item \(\gamma\): baseline level difference (treated vs comparison)\pause
+\item \(\lambda\): common time shock (post vs pre)\pause
+\item \(\tau\): DiD estimate of the treatment effect under parallel trends\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\scriptsize
+Adding covariates is typically for precision (and for making parallel trends more plausible), but it does not replace the design assumption.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Parallel trends (the identification assumption)}
+\small
+The key design assumption is about \emph{counterfactual} trends under no treatment:\pause
+\[
+\E[Y_{i1}(0)-Y_{i0}(0)\mid G_i=1]
+=
+\E[Y_{i1}(0)-Y_{i0}(0)\mid G_i=0].
+\]\pause
+
+\vspace{0.25em}
+\textbf{One formal (strong) ``common trends'' condition:} letting \(\Delta Y_i(d)\equiv Y_{i1}(d)-Y_{i0}(d)\), assume\pause
+\[
+\big(\Delta Y_i(0),\Delta Y_i(1)\big)\ \perp\ (D_{i0},D_{i1}).
+\]
+\scriptsize
+This implies the mean parallel-trends condition above, but it is stronger than what is needed for identification.\pause
+
+\vspace{0.25em}
+\small
+\textbf{Positivity/overlap (2x2):} \(\Pr(G_i=1)\in(0,1)\), and we observe both groups in both periods so each cell mean \(\E[Y\mid G=g,t=t]\) is well-defined.\pause
+
+\vspace{0.25em}
+Under parallel trends (and SUTVA), \(\tau_{DiD}\) identifies the average treatment effect for the treated group in the post period:
+\[
+\tau_{DiD}=\E[Y_{i1}(1)-Y_{i1}(0)\mid G_i=1].
+\]
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{What can go wrong? (threats to parallel trends)}
+\small
+Parallel trends is a claim about the \emph{untreated counterfactual} for the treated group.\pause
+
+\begin{wideitemize}
+\item \textbf{Differential shocks:} treated group faces a shock in the post period unrelated to treatment.\pause
+\item \textbf{Composition changes:} who is observed in each group changes over time.\pause
+\item \textbf{Anticipation:} treatment affects behavior before the official start.\pause
+\item \textbf{Spillovers:} the comparison group is affected indirectly.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\textbf{Pre-trends:} event-study leads are useful diagnostics, but a flat pre-trend is not a proof (power is often limited).
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Inference: serial correlation (Bertrand--Duflo--Mullainathan 2004)}
+\small
+In DiD with repeated observations over time, errors are often serially correlated.\pause
+
+\begin{wideitemize}
+\item Naive i.i.d.\ standard errors can be much too small.\pause
+\item Practical default: cluster standard errors at the unit level (or at the level of treatment assignment).\pause
+\item With few clusters: be cautious (cluster-robust SEs can be unreliable).\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+Key message: inference is part of the design -- not an afterthought.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{What to cluster on? (rule of thumb)}
+\small
+\begin{wideitemize}
+\item Cluster at the level of \textbf{treatment assignment / policy variation}.\pause
+\item If treatment varies at the unit level over time, unit-level clustering is a common default.\pause
+\item If treatment varies at a higher level (e.g., state policy), cluster at that higher level (often two-way with time if needed).\pause
+\item With \textbf{few clusters}: consider alternatives (aggregation, randomization-style inference, or methods designed for small \(G\)).\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{From 2x2 to many periods: TWFE}
+\small
+With panel data, a common starting point is the two-way fixed effects (TWFE) regression:\pause
+\[
+Y_{it}=\alpha_i+\lambda_t+\tau\,D_{it}+\varepsilon_{it}.
+\]\pause
+
+\vspace{0.25em}
+\begin{wideitemize}
+\item If there is one treated group and one treatment time, TWFE aligns with 2x2 DiD.\pause
+\item With staggered adoption and heterogeneous effects, TWFE can mix many comparisons in hard-to-interpret ways.\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Event-study regression (multi-period)}
+\small
+With staggered adoption, a common goal is a dynamic effect profile by event time \(k=t-G_i\).\pause
+
+One regression-style approach is:
+\[
+Y_{it}=\alpha_i+\lambda_t+\sum_{k\neq -1}\beta_k\,\one\{t-G_i=k\}+\varepsilon_{it},
+\]
+where \(k=-1\) (one pre period) is omitted as the baseline.\pause
+
+\vspace{0.25em}
+\textbf{Interpretation:} \(\beta_k\) are ``effects at event time \(k\)'' \emph{if} the regression targets a clean estimand (this can fail under TWFE with heterogeneous effects).
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Staggered adoption: what can go wrong with TWFE?}
+\small
+With multiple cohorts and adoption times, TWFE implicitly averages many 2x2 comparisons.\pause
+
+\begin{wideitemize}
+\item Some comparisons use already-treated units as controls for later-treated units.\pause
+\item Weights can be non-intuitive (and can be negative), so coefficients may not equal the average of cohort-specific effects.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\scriptsize
+See Goodman-Bacon (2021) for the decomposition intuition; see Sun \& Abraham (2021) for event-study issues and fixes.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Toy staggered adoption: TWFE vs.\ transparent targets}
+\small
+In a simple staggered-adoption toy model with heterogeneous effects, TWFE can differ from a transparent "average of cohort-time effects." \pause
+
+<<did-stag-twfe-vs-att, echo=FALSE, fig=TRUE, height=3.4, width=7.6>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  # TWFE estimate
+  fit_twfe <- lm(Y ~ D + factor(id) + factor(t), data = did_stag)
+  tau_twfe <- coef(fit_twfe)[["D"]]
+
+  # True event-time effects (by construction)
+  true_k <- aggregate(te_true ~ event_time, data = subset(did_stag, D == 1), FUN = mean)
+  names(true_k) <- c("k", "true_tau")
+
+  # "CS-style" group-time ATT using not-yet-treated + never-treated as controls, baseline at g-1.
+  treated_groups <- sort(unique(did_stag$G[is.finite(did_stag$G)]))
+  att_gt <- do.call(rbind, lapply(treated_groups, function(g) {
+    out <- do.call(rbind, lapply(sort(unique(did_stag$t[did_stag$t >= g])), function(tt) {
+      base_t <- g - 1
+      treat_idx_t <- did_stag$G == g & did_stag$t == tt
+      treat_idx_b <- did_stag$G == g & did_stag$t == base_t
+
+      ctrl_idx_t <- (did_stag$G > tt) & did_stag$t == tt
+      ctrl_idx_b <- (did_stag$G > tt) & did_stag$t == base_t
+
+      att <- (mean(did_stag$Y[treat_idx_t]) - mean(did_stag$Y[treat_idx_b])) -
+        (mean(did_stag$Y[ctrl_idx_t]) - mean(did_stag$Y[ctrl_idx_b]))
+
+      data.frame(g = g, t = tt, k = tt - g, att = att)
+    }))
+    out
+  }))
+
+  # Aggregate across cohorts at each event time with weights proportional to cohort size
+  n_by_g <- aggregate(id ~ G, data = subset(did_stag, is.finite(G)), FUN = function(x) length(unique(x)))
+  names(n_by_g) <- c("g", "n_g")
+  att_gt <- merge(att_gt, n_by_g, by = "g", all.x = TRUE)
+
+  att_k <- aggregate(att ~ k, data = att_gt, FUN = function(x) NA_real_)
+  att_k$att <- sapply(att_k$k, function(k) {
+    tmp <- subset(att_gt, k == k)
+    sum(tmp$att * tmp$n_g) / sum(tmp$n_g)
+  })
+
+  df_plot <- merge(true_k, att_k, by = "k", all = TRUE)
+
+  ggplot(df_plot, aes(x = k)) +
+    geom_hline(yintercept = tau_twfe, linewidth = 0.8, linetype = 3, color = "gray30") +
+    geom_line(aes(y = true_tau), linewidth = 1.0, color = "firebrick") +
+    geom_point(aes(y = true_tau), size = 1.7, color = "firebrick") +
+    geom_line(aes(y = att), linewidth = 1.0, color = "navy") +
+    geom_point(aes(y = att), size = 1.7, color = "navy") +
+    labs(
+      x = "Event time k",
+      y = "Effect",
+      title = "Event-time effects: true (red) vs CS-style ATT aggregation (blue), TWFE (dashed)"
+    ) +
+    theme_classic(base_size = 12)
+@
+
+\vspace{0.25em}
+\scriptsize
+Toy message: when effects differ by cohort/event time, define the estimand first (e.g., \(ATT(g,t)\) or event-time averages), then use an estimator that targets it.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Modern targets: group-time effects}
+\small
+One clean estimand with staggered adoption is the group-time ATT:\pause
+\[
+ATT(g,t)\equiv \E\!\left[Y_{it}(1)-Y_{it}(0)\mid G_i=g\right],
+\qquad t\ge g,
+\]
+where \(G_i\) is the first-treated time for unit \(i\).\pause
+
+\vspace{0.25em}
+Modern estimators (e.g., Callaway--Sant'Anna) build event-study plots by aggregating \(ATT(g,t)\) across cohorts with transparent weights.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Callaway--Sant'Anna: comparison sets and aggregation}
+\small
+For each treated cohort \(g\) and time \(t\ge g\), define a \textbf{control set} \(C_{g,t}\):\pause
+\begin{wideitemize}
+\item \textbf{Never-treated controls:} units that are never treated.\pause
+\item \textbf{Not-yet-treated controls:} units with \(G_i>t\) (untreated by time \(t\)).\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+One (simplified) way to think about \(ATT(g,t)\) is a 2x2 DiD within cohort \(g\), using baseline \(g-1\):\pause
+\[
+ATT(g,t)\approx
+\Big(\E[Y_t-Y_{g-1}\mid G=g]\Big)
+-\Big(\E[Y_t-Y_{g-1}\mid i\in C_{g,t}]\Big).
+\]
+
+\vspace{0.25em}
+\pause
+\textbf{Aggregation:} to plot event time \(k=t-g\), average \(ATT(g,g+k)\) across cohorts \(g\) using transparent weights (often proportional to cohort size or share treated at that event time).
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Modern workflow (high level)}
+\small
+With staggered adoption, a useful workflow is:\pause
+\begin{enumerate}
+\item Define the estimand: \(ATT(g,t)\) (or event-time effects) for clear \(g,t\).\pause
+\item Choose a comparison group: never-treated or not-yet-treated units.\pause
+\item Estimate \(ATT(g,t)\) within each cohort-time cell.\pause
+\item Aggregate to event time \(k=t-g\) with transparent weights; plot leads/lags.\pause
+\item Do robustness checks (windows, alternative controls, placebo outcomes).\pause
+\end{enumerate}
+
+\vspace{0.25em}
+\scriptsize
+Callaway--Sant'Anna (2021) and Sun--Abraham (2021) are standard references for modern practice.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Event studies: what we want to see}
+\small
+An event-study plot shows average effects by event time \(k=t-g\).\pause
+
+\begin{wideitemize}
+\item Pre-period coefficients (leads) are a diagnostic for trend violations/anticipation.\pause
+\item Post-period coefficients (lags) summarize dynamic treatment effects.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\textbf{Caution:} a good-looking pre-trend plot is helpful, but it is not a proof of parallel trends.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Robustness checklist (DiD)}
+\small
+\begin{wideitemize}
+\item Vary the event window and sample restrictions (who is included as treated/control?).\pause
+\item Try alternative comparison groups (never-treated vs not-yet-treated).\pause
+\item Check sensitivity to covariate adjustment (precision vs identifying variation).\pause
+\item Placebos: outcomes that should not respond; or placebo policy timing.\pause
+\item Inference sensitivity: clustering level; few-cluster concerns; alternative SE methods.\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Synthetic control (SC): when DiD is too thin}
+\small
+When there is a single treated unit (or a small number) and a long time series, DiD with one comparison unit can be fragile.\pause
+
+\begin{wideitemize}
+\item Synthetic control constructs a weighted combination of control units to match the treated unit's pre-treatment outcomes.\pause
+\item Then it uses that weighted combination as the counterfactual post-treatment trend.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\scriptsize
+Core references: Abadie \& Gardeazabal (2003), Abadie, Diamond \& Hainmueller (2010).
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{SC vs.\ DiD (conceptual link)}
+\small
+\begin{wideitemize}
+\item Both are about constructing a credible counterfactual trend.\pause
+\item DiD: a comparison group + a parallel-trends assumption.\pause
+\item SC: a data-driven comparison group (weights) chosen to match the pre-period.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\textbf{Tradeoff:} SC can improve pre-period fit, but it does not eliminate the need for a design argument (and it is still local/design-dependent).
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Week 8 summary (RD + DiD)}
+\small
+\begin{wideitemize}
+\item RD: under continuity at the cutoff, the jump in \(\E[Y\mid X=x]\) identifies \(\E[Y(1)-Y(0)\mid X=c]\) (local effect).\pause
+\item DiD: under parallel trends, the difference in average changes identifies a causal effect for the treated group.\pause
+\item With panels: inference is hard (serial correlation); cluster appropriately.\pause
+\item With staggered adoption: define the estimand first; don't default to TWFE.\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\backupbegin
+%-------------------------------------------------------------------------------%
+
+\begin{frame}[allowframebreaks]{References}
+\bibliographystyle{apalike}
+\nocite{imbens-lemieux_2008}
+\nocite{imbens-kalyanaraman_2012}
+\nocite{mccrary_2008, lee_2008, cattaneo-et-al_2019}
+\nocite{bertrand-et-al_2004, callaway-santanna_2021, goodman-bacon_2021, sun-abraham_2021}
+\nocite{abadie-et-al_2010, abadie-gardeazabal_2003, card-krueger_1994}
+\bibliography{../assets/PLSC30600}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\backupend
+\end{document}

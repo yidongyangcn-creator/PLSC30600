@@ -13,8 +13,8 @@
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \setlength{\tabcolsep}{1.3pt}
-\title{Social Science Inquiry II}
-\subtitle{Week 6: Design-based inference}
+\title{PLSC 30600}
+\subtitle{Week 8: Design-based inference}
 \date{Winter 2026}
 \author{Molly Offer-Westort}
 \institute{Department of Political Science, \\University of Chicago}

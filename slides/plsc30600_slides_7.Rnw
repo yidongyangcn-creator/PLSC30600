@@ -101,13 +101,13 @@ Key idea: \(Z\) is the design feature we trust; \(D\) is endogenous.
 \begin{wideitemize}
 \item Define
 \begin{itemize}
-\item Treatment potential outcomes: \(Y_i(1), Y_i(0)\)\pause
-\item Potential treatment receipt under encouragement: \(D_i(1), D_i(0)\)\pause
+\item Treatment potential outcomes: \(Y_i(d)\) for \(d\in\{0,1\}\)\pause
+\item Potential treatment receipt under encouragement: \(D_i(z)\) for \(z\in\{0,1\}\)\pause
 \end{itemize}
 \item \textbf{Assume}: SUTVA
 \begin{itemize}
-\item Observed receipt: \(D_i = D_i(1)Z_i + D_i(0)(1-Z_i)\)\pause
-\item Observed outcome: \(Y_i = Y_i(1)D_i + Y_i(0)(1-D_i)\)\pause
+\item Observed receipt: \(D_i = D_i(1)Z_i + D_i(0)(1-Z_i)=D_i(Z_i)\)\pause
+\item Observed outcome: \(Y_i = Y_i(1)D_i + Y_i(0)(1-D_i)=Y_i(D_i)\)\pause
 \end{itemize}
 \end{wideitemize}
 
@@ -120,7 +120,7 @@ Key idea: \(Z\) is the design feature we trust; \(D\) is endogenous.
 \textbf{Condition 0} (Exclusion): \(Y_i(d,z)=Y_i(d)\) for all \(d,z\). 
 The instrument does not affect the outcome except through the treatment. 
 
-(\emph{Exclusion} is already built into our outcome notation here: we write \(Y_i(1),Y_i(0)\) rather than \(Y_i(d,z)\), so \(Z\) affects \(Y\) only through receipt \(D\).)
+(\emph{Exclusion} is already built into our outcome notation here: we write \(Y_i(d)\) rather than \(Y_i(d,z)\), so \(Z\) affects \(Y\) only through receipt \(D\).)
 
 \end{frame}
 
@@ -295,10 +295,10 @@ and randomization inference (Week 6) is a natural way to test the sharp null of 
 Week 6 perspective: treat the \emph{potential outcomes} as fixed features of the finite population; the only randomness comes from the assignment mechanism for \(Z\).\pause
 
 \begin{wideitemize}
-\item Define potential outcomes under encouragement assignment: \(Y_i(z)\) and \(D_i(z)\), for \(z\in\{0,1\}\).\pause
+\item Define potential outcomes under encouragement assignment: \(Y_i^{(Z)}(z)\) and \(D_i(z)\), for \(z\in\{0,1\}\). Under exclusion, \(Y_i^{(Z)}(z)=Y_i\!\big(D_i(z)\big)\).\pause
 \item Causal estimands (finite-population ITTs):
 \[
-ITT_Y \equiv \bar Y(1)-\bar Y(0),
+ITT_Y \equiv \bar Y^{(Z)}(1)-\bar Y^{(Z)}(0),
 \qquad
 ITT_D \equiv \bar D(1)-\bar D(0).
 \]\pause
@@ -315,7 +315,7 @@ have a \textbf{design-based} sampling distribution.\pause
 Test the sharp null of \emph{no assignment effect} using Fisher randomization inference.\pause
 
 \begin{wideitemize}
-\item Reduced form null: \(Y_i(1)=Y_i(0)\) for all \(i\). First stage null: \(D_i(1)=D_i(0)\) for all \(i\).\pause
+\item Reduced form null: \(Y_i^{(Z)}(1)=Y_i^{(Z)}(0)\) for all \(i\). First stage null: \(D_i(1)=D_i(0)\) for all \(i\).\pause
 \item Pick a statistic.\pause
 \item Re-draw \(Z\) according to the \emph{actual} assignment mechanism (e.g., all permutations with fixed \(n_1\)).\pause
 \item The randomization distribution gives an exact \(p\)-value (finite-sample, design-based).\pause
@@ -382,8 +382,8 @@ See \cite{aronow-miller_2019} for the separation between design-based logic and 
 \[
 \begin{array}{c|cc}
 & Z=1 & Z=0 \\\hline
-E[Y\mid Z] & 8 & 5 \\
-E[D\mid Z] & 0.75 & 0.25
+\E[Y\mid Z] & 8 & 5 \\
+\E[D\mid Z] & 0.75 & 0.25
 \end{array}
 \qquad\Rightarrow\qquad
 ITT_Y=3,\ \ ITT_D=0.5,\ \ \hat\tau_{Wald}=6.
@@ -471,7 +471,7 @@ With binary \(Z\) and no controls, the 2SLS coefficient equals the Wald ratio.
 \item Setup: observe \((Y_i, D_i, Z_i, X_i)\), define \(Y_i(1),Y_i(0)\) and \(D_i(1),D_i(0)\).\pause
 \item \textbf{(Conditional) independence of the instrument:}
 \[
-\big(Y_i(0),Y_i(1),D_i(1),D_i(0)\big)\ \perp\ Z_i \mid X_i.
+\big(Y_i(0),Y_i(1),D_i(1),D_i(0)\big)\ \indep\ Z_i \mid X_i.
 \]\pause
 \item \textbf{Exclusion:} \(Y_i(d,z)=Y_i(d)\) (no direct effect of \(Z\) on \(Y\)).\pause
 \item \textbf{Monotonicity (no defiers):} \(D_i(1)\ge D_i(0)\) for all \(i\).\pause
@@ -611,13 +611,13 @@ summary(fit_iv, diagnostics = TRUE)
 \small
 Core IV moment condition:
 \[
-\E\!\left[\mathbf{Z}_i\big(Y_i-\mathbf{X}_i^\top\beta\big)\right]=0.
+\E\!\left[\mathbf{z}_i\big(Y_i-\mathbf{x}_i^\top\beta\big)\right]=0.
 \]
 \pause
 Sample analog:
 \begin{align*}
-u_i(\beta) &\equiv Y_i-\mathbf{X}_i^\top\beta, \\
-\hat g(\beta) &\equiv \frac{1}{n}\sum_{i=1}^n \mathbf{Z}_i\,u_i(\beta).
+u_i(\beta) &\equiv Y_i-\mathbf{x}_i^\top\beta, \\
+\hat g(\beta) &\equiv \frac{1}{n}\sum_{i=1}^n \mathbf{z}_i\,u_i(\beta).
 \end{align*}
 \pause
 \begin{wideitemize}
