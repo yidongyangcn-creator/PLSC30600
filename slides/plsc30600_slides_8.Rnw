@@ -871,6 +871,50 @@ DiD uses changes over time plus a comparison group.\pause
 \end{frame}
 
 %-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{DiD picture: noisy raw data vs.\ group means}
+\small
+Raw panel data are noisy; DiD is about \emph{average} changes (thick lines show the expected group means in a toy DGP with parallel pre-trends).\pause
+
+<<did-toy-plot, echo=FALSE, fig=TRUE, height=3.4, width=7.5>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  # Use the toy DGP's expected means (so the pre-trends are exactly parallel in the figure).
+  t0 <- min(did_toy$t[did_toy$D == 1])
+  t_vals <- sort(unique(did_toy$t))
+  gmeans <- expand.grid(t = t_vals, group = c("control", "treated"))
+  gmeans$treated <- as.numeric(gmeans$group == "treated")
+  gmeans$post <- as.numeric(gmeans$t >= t0)
+  gmeans$D <- gmeans$treated * gmeans$post
+
+  level_gap <- 0.8 * gmeans$treated
+  common_trend <- 0.30 * gmeans$t
+  te <- 1.2 + 0.2 * pmax(0, gmeans$t - t0)
+
+  gmeans$Y <- 2.0 + level_gap + common_trend + gmeans$D * te
+
+  # Plot time relative to the pre/post boundary: 0 = last pre period, 1 = first post period.
+  t_rel0 <- t0 - 1
+  did_toy_plot <- did_toy
+  did_toy_plot$t_rel <- did_toy_plot$t - t_rel0
+  gmeans$t_rel <- gmeans$t - t_rel0
+
+  ggplot(did_toy_plot, aes(x = t_rel, y = Y)) +
+    geom_vline(xintercept = 1, linewidth = 0.5, color = "gray35") +
+    geom_point(alpha = 0.03, size = 0.7, color = "gray40") +
+    geom_line(
+      data = gmeans,
+      aes(x = t_rel, y = Y, color = group, group = group),
+      linewidth = 1.2
+    ) +
+    scale_color_manual(values = c(control = "gray20", treated = "firebrick")) +
+    scale_x_continuous(breaks = sort(unique(did_toy_plot$t_rel))) +
+    labs(x = "Time (0 = pre, 1 = post)", y = "Outcome Y") +
+    theme_classic(base_size = 12) +
+    theme(legend.position = "bottom", legend.title = element_blank())
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
 \begin{frame}{2x2 DiD estimand}
 \small
 The DiD estimand is the difference in average changes:
@@ -885,43 +929,6 @@ The DiD estimand is the difference in average changes:
 
 \vspace{0.25em}
 Interpretation: remove (i) time shocks common to both groups and (ii) time-invariant level differences between groups.
-\end{frame}
-
-%-------------------------------------------------------------------------------%
-\begin{frame}[fragile]{DiD picture: noisy raw data vs.\ group means}
-\small
-Raw panel data are noisy; DiD is about \emph{average} changes (thick lines show the expected group means in a toy DGP with parallel pre-trends).\pause
-
-<<did-toy-plot, echo=FALSE, fig=TRUE, height=3.4, width=7.5>>=
-  suppressPackageStartupMessages(library(ggplot2))
-
-  # Use the toy DGP's expected means (so the pre-trends are exactly parallel in the figure).
-  t0 <- 3
-  t_vals <- sort(unique(did_toy$t))
-  gmeans <- expand.grid(t = t_vals, group = c("control", "treated"))
-  gmeans$treated <- as.numeric(gmeans$group == "treated")
-  gmeans$post <- as.numeric(gmeans$t >= t0)
-  gmeans$D <- gmeans$treated * gmeans$post
-
-  level_gap <- 0.8 * gmeans$treated
-  common_trend <- 0.30 * gmeans$t
-  te <- 1.2 + 0.2 * pmax(0, gmeans$t - t0)
-
-  gmeans$Y <- 2.0 + level_gap + common_trend + gmeans$D * te
-
-  ggplot(did_toy, aes(x = t, y = Y)) +
-    geom_vline(xintercept = t0, linewidth = 0.5, color = "gray35") +
-    geom_point(alpha = 0.03, size = 0.7, color = "gray40") +
-    geom_line(
-      data = gmeans,
-      aes(x = t, y = Y, color = group, group = group),
-      linewidth = 1.2
-    ) +
-    scale_color_manual(values = c(control = "gray20", treated = "firebrick")) +
-    labs(x = "Time t", y = "Outcome Y") +
-    theme_classic(base_size = 12) +
-    theme(legend.position = "bottom", legend.title = element_blank())
-@
 \end{frame}
 
 %-------------------------------------------------------------------------------%
@@ -946,7 +953,7 @@ Adding covariates is typically for precision (and for making parallel trends mor
 \end{frame}
 
 %-------------------------------------------------------------------------------%
-\begin{frame}{Parallel trends (the identification assumption)}
+\begin{frame}{Parallel trends + overlap}
 \small
 The key design assumption is about \emph{counterfactual} trends under no treatment:\pause
 \[
@@ -956,22 +963,25 @@ The key design assumption is about \emph{counterfactual} trends under no treatme
 \]\pause
 
 \vspace{0.25em}
-\textbf{One formal (strong) ``common trends'' condition:} letting \(\Delta Y_i(d)\equiv Y_{i1}(d)-Y_{i0}(d)\), assume\pause
-\[
-\big(\Delta Y_i(0),\Delta Y_i(1)\big)\ \perp\ (D_{i0},D_{i1}).
-\]
-\scriptsize
-This implies the mean parallel-trends condition above, but it is stronger than what is needed for identification.\pause
-
-\vspace{0.25em}
-\small
 \textbf{Positivity/overlap (2x2):} \(\Pr(G_i=1)\in(0,1)\), and we observe both groups in both periods so each cell mean \(\E[Y\mid G=g,t=t]\) is well-defined.\pause
+\end{frame}
 
-\vspace{0.25em}
-Under parallel trends (and SUTVA), \(\tau_{DiD}\) identifies the average treatment effect for the treated group in the post period:
+%-------------------------------------------------------------------------------%
+\begin{frame}{Identification under parallel trends}
+\small
+Under parallel trends (and SUTVA), \(\tau_{DiD}\) identifies the average treatment effect for the treated group in the post period:\pause
 \[
 \tau_{DiD}=\E[Y_{i1}(1)-Y_{i1}(0)\mid G_i=1].
 \]
+
+\vspace{0.25em}
+\pause
+\scriptsize
+\textbf{One formal (strong) ``common trends'' condition:} letting \(\Delta Y_i(d)\equiv Y_{i1}(d)-Y_{i0}(d)\), assume
+\[
+\big(\Delta Y_i(0),\Delta Y_i(1)\big)\ \perp\ (D_{i0},D_{i1}).
+\]
+This implies the mean parallel-trends condition, but it is stronger than what is needed for identification.\pause
 \end{frame}
 
 %-------------------------------------------------------------------------------%
@@ -987,7 +997,7 @@ Parallel trends is a claim about the \emph{untreated counterfactual} for the tre
 \end{wideitemize}
 
 \vspace{0.25em}
-\textbf{Pre-trends:} event-study leads are useful diagnostics, but a flat pre-trend is not a proof (power is often limited).
+\textbf{Pre-trends:} event-study leads are useful diagnostics; interpret null pre-trends with caution (power can be limited).
 \end{frame}
 
 %-------------------------------------------------------------------------------%
@@ -995,14 +1005,24 @@ Parallel trends is a claim about the \emph{untreated counterfactual} for the tre
 \small
 In DiD with repeated observations over time, errors are often serially correlated.\pause
 
-\begin{wideitemize}
-\item Naive i.i.d.\ standard errors can be much too small.\pause
-\item Practical default: cluster standard errors at the unit level (or at the level of treatment assignment).\pause
-\item With few clusters: be cautious (cluster-robust SEs can be unreliable).\pause
-\end{wideitemize}
+\vspace{0.25em}
+\textbf{Recall the 2x2 regression:}
+\[
+Y_{it}=\alpha+\gamma\,G_i+\lambda\,\text{Post}_t+\tau\,(G_i\cdot \text{Post}_t)+\varepsilon_{it}.
+\]\pause
 
 \vspace{0.25em}
-Key message: inference is part of the design -- not an afterthought.
+\textbf{What ``serial correlation'' means:} for the same unit \(i\),
+\[
+\text{Cov}(\varepsilon_{it},\varepsilon_{is})\neq 0\quad\text{for }t\neq s.
+\]\pause
+
+\begin{wideitemize}
+\item If you treat \(\{\varepsilon_{it}\}\) as i.i.d.\ across \((i,t)\), standard errors can be much too small.\pause
+\item Practical default: cluster standard errors at the unit level (or at the level of treatment assignment/policy variation).\pause
+\item With few clusters: be cautious (cluster-robust SEs can be unreliable).
+\end{wideitemize}
+
 \end{frame}
 
 %-------------------------------------------------------------------------------%
@@ -1013,6 +1033,75 @@ Key message: inference is part of the design -- not an afterthought.
 \item If treatment varies at the unit level over time, unit-level clustering is a common default.\pause
 \item If treatment varies at a higher level (e.g., state policy), cluster at that higher level (often two-way with time if needed).\pause
 \item With \textbf{few clusters}: consider alternatives (aggregation, randomization-style inference, or methods designed for small \(G\)).\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{transitionframe}
+\centering
+\color{white}
+\Large From 2x2 DiD to fixed effects regressions
+\end{transitionframe}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{One-way fixed effects (unit FE): what is the regression?}
+\small
+\textbf{One-way FE} means we include fixed effects for the unit (subject) \(i\), but not time fixed effects.\pause
+
+\vspace{0.25em}
+\textbf{Regression form:}
+\[
+Y_{it}=\alpha_i+\tau\,D_{it}+u_{it}.
+\]
+\pause
+
+\vspace{0.25em}
+\textbf{Equivalent ``within'' form (demean within unit):}
+\[
+Y_{it}-\bar Y_i=\tau\,(D_{it}-\bar D_i)+(u_{it}-\bar u_i),
+\]
+where \(\bar Y_i\equiv \frac{1}{T}\sum_{t}Y_{it}\) and similarly for \(\bar D_i\).\pause
+
+\vspace{0.25em}
+\textbf{Two-period special case:} with \(t\in\{0,1\}\), this is numerically equivalent to first differences:
+\[
+\Delta Y_i=\tau\,\Delta D_i+\Delta u_i.
+\]
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{One-way FE as generalized first differences (when is it causal?)}
+\small
+In one-way FE, identification comes from \emph{within-unit timing} of treatment.\pause
+
+\vspace{0.25em}
+The maintained conditional-mean model is:
+\[
+\E[Y_{it}\mid D_{it}, i]=\alpha_i+\tau\,D_{it}.
+\]\pause
+
+\vspace{0.25em}
+\begin{wideitemize}
+\item \textbf{Analogy:} with two periods, one-way FE equals the first-difference estimator.\pause
+\item \textbf{Multi-period intuition:} it generalizes first differences by comparing each unit to itself over many periods.\pause
+\item \textbf{Consistency requires} that (conditional on the unit effect \(\alpha_i\)) changes in \(D_{it}\) are as-if random with respect to time-varying shocks in \(u_{it}\) (a ``no time-varying confounding'' / strict exogeneity-type condition).\pause
+\item If there are \emph{common period shocks} correlated with \(D_{it}\), add period fixed effects \(\lambda_t\) (TWFE) to absorb them.\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Example: when one-way FE can be credible}
+\small
+One-way FE can be credible when treatment timing is as-if random within unit.\pause
+
+\vspace{0.25em}
+\textbf{Example (crossover randomization):}\pause
+\begin{wideitemize}
+\item Units \(i\): students; periods \(t\): weeks.\pause
+\item Each week, each student is randomly assigned \(D_{it}\in\{0,1\}\) (e.g., feature on/off).\pause
+\item Then \(D_{it}\perp u_{it}\mid i\), so \(\E[u_{it}\mid D_{it},i]=0\) and one-way FE identifies \(\tau\) in \(Y_{it}=\alpha_i+\tau D_{it}+u_{it}\).\pause
+\item We need to assume no within-person spillovers/sufficient washout time between measures. 
+\item If treatment probabilities drift over time or treatment is rolled out later for everyone, common time shocks can correlate with \(D_{it}\); then add period FE \(\lambda_t\) (TWFE).\pause
 \end{wideitemize}
 \end{frame}
 
@@ -1032,6 +1121,115 @@ Y_{it}=\alpha_i+\lambda_t+\tau\,D_{it}+\varepsilon_{it}.
 \end{frame}
 
 %-------------------------------------------------------------------------------%
+\begin{frame}{TWFE with two periods: first differences and generalized DiD}
+\small
+With only two periods \(t\in\{1,2\}\), TWFE
+\[
+Y_{it}=\alpha_i+\lambda_t+\tau\,D_{it}+\varepsilon_{it}
+\]
+is algebraically equivalent to a first-differences regression.\pause
+
+\vspace{0.25em}
+Difference within unit \(i\):
+\[
+\Delta Y_i\equiv Y_{i2}-Y_{i1}
+=
+(\lambda_2-\lambda_1)
+\;+\;
+\tau\,\Delta D_i
+\;+\;
+\Delta \varepsilon_i,
+\]
+where \(\Delta D_i\equiv D_{i2}-D_{i1}\) and \(\Delta \varepsilon_i\equiv \varepsilon_{i2}-\varepsilon_{i1}\).\pause
+
+\vspace{0.25em}
+So estimating TWFE with two periods gives the same \(\hat\tau\) as OLS of \(\Delta Y_i\) on \(\Delta D_i\) \textbf{with a constant} (the constant estimates \(\lambda_2-\lambda_1\)).\pause
+
+\vspace{0.25em}
+In the 2x2 DiD setup with no pre-treatment (\(D_{i1}=0\) for all \(i\)) and \(D_{i2}=\one\{G_i=1\}\), we have \(\Delta D_i=\one\{G_i=1\}\), so
+\[
+\tau=\E[\Delta Y_i\mid G_i=1]-\E[\Delta Y_i\mid G_i=0],
+\]
+which is exactly the (generalized) DiD estimator.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{TWFE in practice (T>2): what you are doing}
+\small
+\textbf{Dummy-variable form:} TWFE is just OLS with unit and period indicators:
+\[
+\E[Y_{it}\mid D_{it}, i, t]
+=
+\tau\,D_{it}
+\;+\;
+\sum_{j=1}^{n}\alpha_j\,\one\{i=j\}
+\;+\;
+\sum_{s=1}^{T}\lambda_s\,\one\{t=s\}.
+\]\pause
+
+\vspace{0.25em}
+\textbf{Interpretation:} \(\hat\tau\) uses within-unit changes in \(D_{it}\), netting out (i) time-invariant unit differences \((\alpha_i)\) and (ii) common shocks in each period \((\lambda_t)\).\pause
+
+\vspace{0.25em}
+\textbf{When to trust it:}\pause
+\begin{wideitemize}
+\item If (in the absence of treatment) treated and comparison observations would follow the same \emph{average} time path after accounting for \(\alpha_i\) and \(\lambda_t\) (a multi-period parallel-trends condition).\pause
+\item And there is not ``bad'' time-varying confounding that both moves \(D_{it}\) and directly affects \(Y_{it}\).\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Example: when TWFE can be credible}
+\small
+TWFE can be credible when (i) there are common time shocks and (ii) treatment timing is as-if random within unit.\pause
+
+\vspace{0.25em}
+\textbf{Example (phased-in random rollout):}\pause
+\begin{wideitemize}
+\item Units \(i\): schools; periods \(t\): years. Outcome \(Y_{it}\): test scores.\pause
+\item A new program is rolled out to schools in a randomized order; \(D_{it}=1\) once school \(i\) receives it.\pause
+\item \(\alpha_i\) absorbs time-invariant school differences; \(\lambda_t\) absorbs statewide shocks each year.\pause
+\item Random rollout implies \(D_{it}\perp \varepsilon_{it}\mid i,t\), so TWFE can identify an average effect \(\tau\) in \(Y_{it}=\alpha_i+\lambda_t+\tau D_{it}+\varepsilon_{it}\).\pause
+\item If effects vary by cohort or by time-since-treatment, the single TWFE coefficient can be hard to interpret (staggered adoption issue).\pause
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Relating to practice: FE are adjustment, not identification}
+\small
+Two-way fixed effects adjust for systematic differences across units (\(\alpha_i\)) and systematic shocks across time periods (\(\lambda_t\)). This is often a good idea.\pause
+
+\vspace{0.25em}
+\begin{wideitemize}
+\item \textbf{But:} FE do not replace a design argument. They do not automatically solve time-varying confounding or differential trends.\pause
+\item \textbf{Why pooled OLS / random effects can be a bad idea:} these approaches effectively assume unit heterogeneity is uncorrelated with treatment (e.g., \(\text{Cov}(\alpha_i,D_{it})=0\)); in practice this is often implausible.\pause
+\item \textbf{Covariates:} you can add \(X_{it}\) directly; interpret the identifying condition as ``parallel trends conditional on \(X_{it}\).''\pause
+\item \textbf{Inference:} use cluster-robust SEs (cluster by unit, or by assignment level) or bootstrap by resampling units.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\scriptsize
+See Green, Kim, and Yoon (2001) on pitfalls of ``dirty pooling'' in time-series cross-section settings.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}{Assumptions: what identifies causal effects?}
+\scriptsize
+Fixed effects are adjustment. Identification comes from assumptions about treatment timing and potential outcomes.\pause
+
+\textbf{Staggered adoption notation:} \(G_i\) is unit \(i\)'s first treated period (\(G_i=\infty\) if never treated). \(Y_{it}(g)\) is the potential outcome at time \(t\) if first treated at time \(g\) and treated thereafter.\pause
+
+\begin{wideitemize}
+\item \textbf{Randomized timing (strong):} \(G_i\) (or \(\{D_{it}\}\)) is as-if random with respect to \(\{Y_{it}(g)\}\). Stronger than parallel trends.\pause
+\item \textbf{No anticipation:} for any \(g\), \(Y_{it}(g)=Y_{it}(\infty)\) for all \(t<g\).\pause
+\item \textbf{Invariance to history (strong):} \(Y_{it}(g)=Y_{it}(1)\) for all \(t\ge g\).\pause
+\item \textbf{Constant effects across units:} treatment effects do not vary with \(i\).\pause
+\item \textbf{Constant effects over time:} treatment effects do not vary with \(t\) or event time \(k=t-g\).\pause
+\item \textbf{Bottom line:} different assumptions identify different causal quantities.
+\end{wideitemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------%
 \begin{frame}{Event-study regression (multi-period)}
 \small
 With staggered adoption, a common goal is a dynamic effect profile by event time \(k=t-G_i\).\pause
@@ -1047,6 +1245,174 @@ where \(k=-1\) (one pre period) is omitted as the baseline.\pause
 \end{frame}
 
 %-------------------------------------------------------------------------------%
+\begin{frame}{Event studies: what we want to see}
+\small
+An event-study plot shows average effects by event time \(k=t-G_i\) (time relative to first treatment).\pause
+
+\begin{wideitemize}
+\item Pre-period coefficients (leads) are a diagnostic for trend violations/anticipation.\pause
+\item Post-period coefficients (lags) summarize dynamic treatment effects.\pause
+\end{wideitemize}
+
+\vspace{0.25em}
+\textbf{Caution:} a good-looking pre-trend plot is helpful, but it is not a proof of parallel trends.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Staggered adoption: who is treated when?}
+\small
+With staggered adoption, different cohorts start treatment in different periods.\pause
+
+<<did-stag-timing, echo=FALSE, fig=TRUE, height=3.9, width=7.8>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  unit_df <- unique(did_stag[c("id", "group")])
+  unit_df <- unit_df[order(unit_df$group, unit_df$id), ]
+
+  n_show <- 20
+  ids_show <- unlist(tapply(unit_df$id, unit_df$group, function(v) head(v, n_show)))
+
+  df_vis <- subset(did_stag, id %in% ids_show)
+  df_vis$group <- factor(df_vis$group, levels = c("never", "early", "late"))
+  df_vis$id_plot <- ave(df_vis$id, df_vis$group, FUN = function(x) as.integer(factor(x, levels = sort(unique(x)))))
+
+  g_vals <- sort(unique(df_vis$G[is.finite(df_vis$G)]))
+
+  ggplot(df_vis, aes(x = t, y = factor(id_plot), fill = factor(D))) +
+    geom_tile(color = "white", linewidth = 0.15) +
+    geom_vline(xintercept = g_vals, linewidth = 0.4, linetype = "22", color = "gray35") +
+    facet_grid(group ~ ., scales = "free_y", space = "free_y") +
+    scale_fill_manual(
+      values = c("0" = "gray90", "1" = "firebrick"),
+      breaks = c("0", "1"),
+      labels = c("Untreated", "Treated"),
+      name = "D_it"
+    ) +
+    scale_x_continuous(breaks = sort(unique(df_vis$t))) +
+    labs(x = "Time t", y = "Units (sample)") +
+    theme_classic(base_size = 12) +
+    theme(
+      strip.background = element_blank(),
+      strip.text.y = element_text(angle = 0, hjust = 0),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      legend.position = "bottom",
+      panel.spacing = grid::unit(0.6, "lines")
+    )
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Parallel trends with staggered adoption (conceptual)}
+\small
+Three cohorts: never treated (U), early treated at \(k\), late treated at \(l\).\pause
+
+<<did-stag-parallel-trends, echo=FALSE, fig=TRUE, height=3.4, width=7.8>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  t <- 1:20
+  k <- 7
+  l <- 14
+
+  b <- 0.60  # common trend slope (parallel trends in untreated outcomes)
+  y_u <- 5 + b * t
+  y_early0 <- 18 + b * t
+  y_late0 <- 10 + b * t
+
+  te_early <- 10
+  te_late <- 15
+  y_early <- y_early0 + ifelse(t >= k, te_early, 0)
+  y_late <- y_late0 + ifelse(t >= l, te_late, 0)
+
+  df <- rbind(
+    data.frame(group = "U", t = t, y = y_u),
+    data.frame(group = "k", t = t, y = y_early),
+    data.frame(group = "l", t = t, y = y_late)
+  )
+
+  # Line segments that do not connect across the jumps at k and l.
+  df_line <- rbind(
+    data.frame(group = "U", t = t, y = y_u, seg = "U"),
+    data.frame(group = "k", t = t[t < k], y = y_early[t < k], seg = "k_pre"),
+    data.frame(group = "k", t = t[t >= k], y = y_early[t >= k], seg = "k_post"),
+    data.frame(group = "l", t = t[t < l], y = y_late[t < l], seg = "l_pre"),
+    data.frame(group = "l", t = t[t >= l], y = y_late[t >= l], seg = "l_post")
+  )
+
+  jumps <- data.frame(
+    x = c(k, l),
+    y0 = c(y_early0[t == k], y_late0[t == l]),
+    y1 = c(y_early[t == k], y_late[t == l])
+  )
+
+  y_ann <- min(df$y) - 3
+
+  ggplot() +
+    geom_vline(xintercept = c(k, l), linewidth = 0.6, color = "firebrick") +
+    geom_line(
+      data = df_line[df_line$group == "U", ],
+      aes(x = t, y = y),
+      linewidth = 1.4, color = "gray55"
+    ) +
+    geom_line(
+      data = df_line[df_line$group != "U", ],
+      aes(x = t, y = y, group = seg),
+      linewidth = 0.9, color = "black"
+    ) +
+    geom_segment(
+      data = jumps,
+      aes(x = x, xend = x, y = y0, yend = y1),
+      linetype = 2, linewidth = 0.8, color = "black"
+    ) +
+    geom_point(
+      data = df[df$group == "k", ],
+      aes(x = t, y = y),
+      shape = 17, size = 2.2, color = "black"
+    ) +
+    geom_point(
+      data = df[df$group == "l", ],
+      aes(x = t, y = y),
+      shape = 1, size = 2.3, stroke = 0.9, color = "black"
+    ) +
+    annotate(
+      "segment",
+      x = min(t), xend = k, y = y_ann, yend = y_ann,
+      arrow = grid::arrow(ends = "both", length = grid::unit(0.12, "in")),
+      linewidth = 0.5
+    ) +
+    annotate(
+      "segment",
+      x = k, xend = l, y = y_ann, yend = y_ann,
+      arrow = grid::arrow(ends = "both", length = grid::unit(0.12, "in")),
+      linewidth = 0.5
+    ) +
+    annotate(
+      "segment",
+      x = l, xend = max(t), y = y_ann, yend = y_ann,
+      arrow = grid::arrow(ends = "both", length = grid::unit(0.12, "in")),
+      linewidth = 0.5
+    ) +
+    annotate("text", x = (min(t) + k) / 2, y = y_ann + 0.9, label = "PRE(k)", size = 3.6) +
+    annotate("text", x = (k + l) / 2, y = y_ann + 0.9, label = "MID(k,l)", size = 3.6) +
+    annotate("text", x = (l + max(t)) / 2, y = y_ann + 0.9, label = "POST(l)", size = 3.6) +
+    annotate("text", x = max(t) - 1, y = y_early[max(t)] + 1.2, label = "early cohort", hjust = 1, size = 3.6) +
+    annotate("text", x = max(t) - 1, y = y_late[max(t)] - 0.5, label = "late cohort", hjust = 1, size = 3.6) +
+    annotate(
+      "text",
+      x = max(t) - 1, y = y_u[max(t)] - 0.5,
+      label = "never treated", hjust = 1, size = 3.6, color = "gray35"
+    ) +
+    scale_x_continuous(
+      breaks = c(min(t), k, l, max(t)),
+      labels = c("1", "k", "l", "T")
+    ) +
+    scale_y_continuous(limits = c(0, max(df$y) + 3)) +
+    labs(x = "Time", y = "Units of Y") +
+    theme_classic(base_size = 12)
+@
+\end{frame}
+
+%-------------------------------------------------------------------------------%
 \begin{frame}{Staggered adoption: what can go wrong with TWFE?}
 \small
 With multiple cohorts and adoption times, TWFE implicitly averages many 2x2 comparisons.\pause
@@ -1059,6 +1425,85 @@ With multiple cohorts and adoption times, TWFE implicitly averages many 2x2 comp
 \vspace{0.25em}
 \scriptsize
 See Goodman-Bacon (2021) for the decomposition intuition; see Sun \& Abraham (2021) for event-study issues and fixes.
+\end{frame}
+
+%-------------------------------------------------------------------------------%
+\begin{frame}[fragile]{Toy staggered adoption: the 2x2 comparisons TWFE mixes}
+\small
+In this toy example there are two treated cohorts (early, late) and a never-treated cohort.\pause
+
+\vspace{0.25em}
+TWFE effectively combines multiple 2x2 DiD comparisons --- including comparisons that use already-treated units as controls.\pause
+
+<<did-stag-2x2-comparisons, echo=FALSE, fig=TRUE, height=3.4, width=7.8>>=
+  suppressPackageStartupMessages(library(ggplot2))
+
+  fit_twfe <- lm(Y ~ D + factor(id) + factor(t), data = did_stag)
+  tau_twfe <- coef(fit_twfe)[["D"]]
+
+  did_2x2 <- function(df, g_treat, g_ctrl, pre_t, post_t) {
+    yt_pre <- mean(df$Y[df$group == g_treat & df$t %in% pre_t])
+    yt_post <- mean(df$Y[df$group == g_treat & df$t %in% post_t])
+    yc_pre <- mean(df$Y[df$group == g_ctrl & df$t %in% pre_t])
+    yc_post <- mean(df$Y[df$group == g_ctrl & df$t %in% post_t])
+    (yt_post - yt_pre) - (yc_post - yc_pre)
+  }
+
+  g_vals <- sort(unique(did_stag$G[is.finite(did_stag$G)]))
+  g_early <- g_vals[1]
+  g_late <- g_vals[2]
+  t_vals <- sort(unique(did_stag$t))
+
+  est_e_never <- did_2x2(did_stag, "early", "never", pre_t = t_vals[t_vals < g_early], post_t = t_vals[t_vals >= g_early])
+  est_l_never <- did_2x2(did_stag, "late", "never", pre_t = t_vals[t_vals < g_late], post_t = t_vals[t_vals >= g_late])
+
+  est_e_l_notyet <- did_2x2(
+    did_stag,
+    "early", "late",
+    pre_t = t_vals[t_vals < g_early],
+    post_t = t_vals[t_vals >= g_early & t_vals < g_late]
+  )
+
+  est_l_e_already <- did_2x2(
+    did_stag,
+    "late", "early",
+    pre_t = t_vals[t_vals >= g_early & t_vals < g_late],
+    post_t = t_vals[t_vals >= g_late]
+  )
+
+  df_comp <- data.frame(
+    comparison = c(
+      "Early vs never (clean control)",
+      "Late vs never (clean control)",
+      "Early vs late (late not yet treated)",
+      "Late vs early (early already treated)"
+    ),
+    est = c(est_e_never, est_l_never, est_e_l_notyet, est_l_e_already),
+    type = c("clean", "clean", "not_yet", "already_treated")
+  )
+
+  df_comp$type <- factor(df_comp$type, levels = c("clean", "not_yet", "already_treated"))
+  df_comp$comparison <- factor(df_comp$comparison, levels = rev(df_comp$comparison))
+
+  ggplot(df_comp, aes(x = comparison, y = est, fill = type)) +
+    geom_hline(yintercept = 0, linewidth = 0.4, color = "gray35") +
+    geom_hline(yintercept = tau_twfe, linewidth = 0.8, linetype = 3, color = "gray25") +
+    geom_col(width = 0.75) +
+    coord_flip() +
+    scale_fill_manual(
+      values = c(clean = "gray70", not_yet = "steelblue3", already_treated = "firebrick"),
+      breaks = c("clean", "not_yet", "already_treated"),
+      labels = c("Clean control", "Not-yet-treated control", "Already-treated control"),
+      name = "Comparison type"
+    ) +
+    labs(
+      x = NULL,
+      y = "2x2 DiD estimate",
+      title = "Different 2x2 comparisons can differ; TWFE (dashed) averages them implicitly"
+    ) +
+    theme_classic(base_size = 12) +
+    theme(legend.position = "bottom")
+@
 \end{frame}
 
 %-------------------------------------------------------------------------------%
@@ -1182,32 +1627,6 @@ Callaway--Sant'Anna (2021) and Sun--Abraham (2021) are standard references for m
 \end{frame}
 
 %-------------------------------------------------------------------------------%
-\begin{frame}{Event studies: what we want to see}
-\small
-An event-study plot shows average effects by event time \(k=t-g\).\pause
-
-\begin{wideitemize}
-\item Pre-period coefficients (leads) are a diagnostic for trend violations/anticipation.\pause
-\item Post-period coefficients (lags) summarize dynamic treatment effects.\pause
-\end{wideitemize}
-
-\vspace{0.25em}
-\textbf{Caution:} a good-looking pre-trend plot is helpful, but it is not a proof of parallel trends.
-\end{frame}
-
-%-------------------------------------------------------------------------------%
-\begin{frame}{Robustness checklist (DiD)}
-\small
-\begin{wideitemize}
-\item Vary the event window and sample restrictions (who is included as treated/control?).\pause
-\item Try alternative comparison groups (never-treated vs not-yet-treated).\pause
-\item Check sensitivity to covariate adjustment (precision vs identifying variation).\pause
-\item Placebos: outcomes that should not respond; or placebo policy timing.\pause
-\item Inference sensitivity: clustering level; few-cluster concerns; alternative SE methods.\pause
-\end{wideitemize}
-\end{frame}
-
-%-------------------------------------------------------------------------------%
 \begin{frame}{Synthetic control (SC): when DiD is too thin}
 \small
 When there is a single treated unit (or a small number) and a long time series, DiD with one comparison unit can be fragile.\pause
@@ -1256,6 +1675,7 @@ Core references: Abadie \& Gardeazabal (2003), Abadie, Diamond \& Hainmueller (2
 \nocite{imbens-kalyanaraman_2012}
 \nocite{mccrary_2008, lee_2008, cattaneo-et-al_2019}
 \nocite{bertrand-et-al_2004, callaway-santanna_2021, goodman-bacon_2021, sun-abraham_2021}
+\nocite{green-kim-yoon_2001}
 \nocite{abadie-et-al_2010, abadie-gardeazabal_2003, card-krueger_1994}
 \bibliography{../assets/PLSC30600}
 \end{frame}
