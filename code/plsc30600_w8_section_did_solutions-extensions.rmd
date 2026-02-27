@@ -1,0 +1,445 @@
+---
+title: "Section W8 - DiD to TWFE"
+author: "Maggie X. Wang"
+date: "2026-02-26"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(fixest)
+library(panelView)
+```
+
+# 0. Set-up
+
+```{r}
+# Card & Krueger (1994)
+minwage <- read_csv("minwage.csv")
+
+# Paglayan (2019)
+union <- read_dta("Paglayan Dataset.dta") %>%
+  filter(!is.na(studteachratio),
+         State != "DC", State != "WI",
+         year > 1959, year < 1997)
+```
+
+# 1. Warm-Up: Card & Krueger (1994)
+
+Recall the context: New Jersey raised its minimum wage in April 1992; Pennsylvania did not. Card and Krueger surveyed fast-food restaurants *before* (Wave 1) and *after* (Wave 2) to see how the minimum wage raise affects full time employment (`EMPFT` for wave 1; `EMPFT2` for wave 2).
+
+## 1.1 What is in the naive DiD estimator?
+
+Recall:
+
+$$\tau_{DiD}\equiv\big(E[Y \mid G = 1, t = 1]-E[Y \mid G = 1, t = 0]\big)-\big(E[Y \mid G = 0, t = 1]-E[Y \mid G = 0, t = 0]\big)$$
+**Think about: What does each of the four expected value mean? What about the first difference and the second difference?**
+
+**Think about: What is the parallel trends assumption here?**
+
+# 1.2 Estimate TWFE  (`feols()`)
+
+```{r}
+minwage_long <- minwage %>%
+  pivot_longer(cols = c(EMPFT, EMPFT2),
+               names_to = "wave", values_to = "Y") %>%
+  mutate(time  = if_else(wave == "EMPFT", 0, 1),
+         treat = if_else(STATE == 1, "NJ (treated)", "PA (control)")) %>%
+  mutate(
+    G  = if_else(treat == "NJ (treated)", 1, 0),
+    D  = G * time,
+    id = rep(1:(nrow(minwage)), each = 2)
+  )
+
+twfe_ck <- feols(Y ~ D | id + time, data = minwage_long, cluster = ~id)
+coef(twfe_ck)["D"]
+```
+
+# 1.3 Confirm TWFE matches DiD estimate
+
+Run the following code that calculates each component of the DiD equation separately to obtain the estimate. Make sure your TWFE results match.
+
+```{r}
+cell_means <- minwage_long %>%
+  group_by(treat, time) %>%
+  summarise(mean_Y = mean(Y, na.rm = TRUE), .groups = "drop")
+
+cell_table <- cell_means %>%
+  pivot_wider(names_from = time, values_from = mean_Y,
+              names_prefix = "t") %>%
+  mutate(change = t1 - t0)
+
+cell_table
+
+cell_table %>%
+  summarise(did =
+              change[treat == "NJ (treated)"] -
+              change[treat == "PA (control)"]) %>%
+  pull(did)
+```
+
+# 2. Staggered Adoption with Paglayan (2019)
+
+Paglayan (2019) studies whether laws requiring collective bargaining (`CBrequired_SY`) with teachers increase public education spending, as measured with logged per-pupil expenditures `lnppexpend`.
+
+Using staggered adoption of these laws across U.S. states, she applies a difference-in-differences design with state and year fixed effects to compare outcomes before and after adoption.
+
+**Think about: What is the parallel trends assumption here?**
+
+## 2.1 Visualize the staggered treatment timing using panelview()
+
+**Think about: What are the treatment cohorts (groups)?**
+
+```{r}
+panelview(data = union, D = "CBrequired_SY",
+          index = c("State", "year"),
+          by.timing = TRUE,
+          axis.adjust = TRUE,
+          axis.lab = "time")
+```
+
+## 2.2 Estimate the naive TWFE using feols()
+
+```{r}
+twfe_pag <- feols(lnppexpend ~ CBrequired_SY | State + year,
+                  data = union, cluster = ~State)
+etable(twfe_pag)
+```
+
+## 2.3 What are the hidden 2x2s?
+
+Below, I grouped treatment into two cohorts: early and late.
+
+Referencing slide 48 in Week 8's slides, we know that TWFE effectively combines multiple 2x2 DiD comparisons. In the case of two treatment cohorts, there are four:
+
++ Early vs never
++ Late vs never
++ Early vs late
++ Late vs early (problematic)
+
+**In plain words, why can't we compare late vs. early?**
+
+_Fundamentally, the already treated units are not in the control group: they have been treated! They are not the appropriate counterfactual for the later-treated units._
+
+**Why does the TWFE compare late adopters to early adopters?**
+
+_TWFE is not automatically responsive to how we think about treatment and control in a design-based setting. Instead, it estimates the effect of the residualized D on the residualized Y after removing unit and time averages in both. Whenever there are differences between the residualized Ds, it will estimate how they map onto differences between the residualized Ys._
+
+_Even when the late-adopter and early adopters, at a time post-late-adoption, both have D=1, their residualized D differs, because early-treated units have higher unit means for D than do later-treated units. Therefore, the TWFE will still compare the two groups._
+
+
+Using the example of `est1` and the helper function, separate these four 2x2s. Compare them to the naive TWFE estimate.
+
+```{r}
+# Define early/late/never (coarse timing groups)
+median_yr <- median(union$YearCBrequired, na.rm = TRUE)
+
+union_gb <- union |>
+  mutate(group_label = case_when(
+    is.na(YearCBrequired)       ~ "never",
+    YearCBrequired <= median_yr ~ "early",
+    TRUE                        ~ "late"
+  ))
+
+all_yrs <- sort(unique(union_gb$year))
+
+# Pick a single "early adoption time" and "late adoption time" to anchor the periods
+g_early <- min(union_gb$YearCBrequired[union_gb$group_label == "early"], na.rm = TRUE)
+g_late  <- min(union_gb$YearCBrequired[union_gb$group_label == "late"],  na.rm = TRUE)
+```
+
+```{r}
+# Helper function to do individual 2x2s
+did_2x2 <- function(df, g_treat, g_ctrl, pre_t, post_t) {
+  yt_pre  <- mean(df$lnppexpend[df$group_label == g_treat & df$year %in% pre_t],  na.rm=TRUE)
+  yt_post <- mean(df$lnppexpend[df$group_label == g_treat & df$year %in% post_t], na.rm=TRUE)
+  yc_pre  <- mean(df$lnppexpend[df$group_label == g_ctrl  & df$year %in% pre_t],  na.rm=TRUE)
+  yc_post <- mean(df$lnppexpend[df$group_label == g_ctrl  & df$year %in% post_t], na.rm=TRUE)
+  (yt_post - yt_pre) - (yc_post - yc_pre)
+}
+```
+
+```{r}
+# Early vs never: pre < g_early, post >= g_early
+est1 <- did_2x2(union_gb, "early", "never",
+                pre_t  = all_yrs[all_yrs < g_early],
+                post_t = all_yrs[all_yrs >= g_early])
+
+# Late vs never: pre < g_late, post >= g_late
+est2 <- did_2x2(union_gb, "late", "never",
+                pre_t  = all_yrs[all_yrs < g_late],
+                post_t = all_yrs[all_yrs >= g_late])
+
+# Early vs late (late not yet treated): pre < g_early, post in [g_early, g_late)
+est3 <- did_2x2(union_gb, "early", "late",
+                pre_t  = all_yrs[all_yrs < g_early],
+                post_t = all_yrs[all_yrs >= g_early & all_yrs < g_late])
+
+# Late vs early (early already treated): pre in [g_early, g_late), post >= g_late
+est4 <- did_2x2(union_gb, "late", "early",
+                pre_t  = all_yrs[all_yrs >= g_early & all_yrs < g_late],
+                post_t = all_yrs[all_yrs >= g_late])
+```
+
+```{r}
+tibble(
+  comparison = c("Early vs never (clean)",
+                 "Late vs never (clean)",
+                 "Early vs late, not-yet treated (ok)",
+                 "Late vs early, already treated (no-no)"),
+  estimate   = c(est1, est2, est3, est4)
+) |>
+  add_row(comparison = "Naive TWFE", estimate = coef(twfe_pag))
+```
+
+```{r}
+# Visualize
+df_comp <- tibble(
+  comparison = c("Early vs never (clean)",
+                 "Late vs never (clean)",
+                 "Early vs late (not yet)",
+                 "Late vs early (already treated)",
+                 "Naive TWFE"),
+  estimate = c(est1, est2, est3, est4, coef(twfe_pag)),
+  flag = c("normal","normal","normal","highlight","highlight")
+)
+
+ggplot(df_comp, aes(x = reorder(comparison, estimate), y = estimate, fill = flag)) +
+  geom_col(width = 0.7) +
+  geom_hline(yintercept = 0, linewidth = 0.4) +
+  coord_flip() +
+  labs(x = NULL, y = "DiD estimate (ln per-pupil expend.)",
+       title = "Four 2×2 comparisons hiding inside TWFE (coarse Goodman–Bacon intuition)") +
+  theme_bw()
+```
+
+## 2.4 Illustration: Visualize which cells are used for comparison in each 2x2
+
+```{r}
+cell_grid <- union_gb %>%
+  group_by(group_label, year) %>%
+  summarise(ybar = mean(lnppexpend, na.rm = TRUE), .groups = "drop")
+
+highlight_years <- function(df, treat_group, ctrl_group, pre_t, post_t, label) {
+  df %>%
+    mutate(
+      in_2x2 = case_when(
+        group_label == treat_group & year %in% pre_t  ~ "Treated: pre",
+        group_label == treat_group & year %in% post_t ~ "Treated: post",
+        group_label == ctrl_group  & year %in% pre_t  ~ "Control: pre",
+        group_label == ctrl_group  & year %in% post_t ~ "Control: post",
+        TRUE ~ "Other"
+      ),
+      comparison = label
+    )
+}
+
+p1 <- highlight_years(cell_grid, "early", "never",
+                      pre_t = all_yrs[all_yrs < g_early],
+                      post_t = all_yrs[all_yrs >= g_early],
+                      label = "Early vs never")
+
+p2 <- highlight_years(cell_grid, "late", "never",
+                      pre_t = all_yrs[all_yrs < g_late],
+                      post_t = all_yrs[all_yrs >= g_late],
+                      label = "Late vs never")
+
+p3 <- highlight_years(cell_grid, "early", "late",
+                      pre_t = all_yrs[all_yrs < g_early],
+                      post_t = all_yrs[all_yrs >= g_early & all_yrs < g_late],
+                      label = "Early vs late (not yet)")
+
+p4 <- highlight_years(cell_grid, "late", "early",
+                      pre_t = all_yrs[all_yrs >= g_early & all_yrs < g_late],
+                      post_t = all_yrs[all_yrs >= g_late],
+                      label = "Late vs early (already)")
+
+bind_rows(p1, p2, p3, p4) %>%
+  ggplot(aes(x = year, y = group_label)) +
+  geom_tile(aes(fill = in_2x2), color = "white", linewidth = 0.2) +
+  facet_wrap(~comparison, ncol = 2) +
+  geom_vline(xintercept = c(g_early, g_late), linetype = 2, linewidth = 0.3) +
+  labs(x = NULL, y = NULL, fill = NULL,
+       title = "The 2x2s, Visually") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 2.5 Illustration (no coding): TWFE is a weighted average of 2x2 comparisons
+
+```{r}
+#install.packages("bacondecomp")
+library(bacondecomp)
+
+bacon_results <- bacon(
+  lnppexpend ~ CBrequired_SY,
+  data = union,
+  id_var = "State",
+  time_var = "year"
+)
+
+head(bacon_results)
+
+weighted_avg <- sum(bacon_results$weight * bacon_results$estimate)
+weighted_avg #same as naive TWFE
+```
+
+
+## 2.6 Robust estimation with staggered adoption using sunab()
+
+Estimate a robust event study with k=-1 as the reference period and plot it.
+
+You can reference section 5.2.6 in here: https://yiqingxu.org/packages/fect/05-panel.html
+
+**Compare the results to the results from the TWFEs. How are they different?**
+
+*The plot below shows evidence that unionization does not change per-pupil expenditure initially, but slightly increases it when the treatment has been in place for 20-30 years. Whereas *
+
+**What else can you tell from this plot that informs why the late-to-early comparison was negative?**
+
+*The early adopters are experiencing a small positive effect when the late adopters gets treated; whereas in the initial years after treatment, late adopters are still getting near-zero effects.*
+
+*The difference between the late adopters' treatment effect (near zero) and the early adopters' treatment effect (positive) would thus be negative.*
+
+
+```{r}
+union_sa <- union %>%
+  group_by(State) %>%
+  mutate(G = ifelse(any(CBrequired_SY == 1, na.rm = TRUE),
+                    min(year[CBrequired_SY == 1], na.rm = TRUE),
+                    Inf)) %>%
+  ungroup()
+
+es_sa <- feols(lnppexpend ~ sunab(G, year, ref.p = -1) | State + year,
+               data = union_sa, cluster = ~State)
+
+iplot(es_sa,
+      main = "Sun & Abraham event study via sunab()",
+      xlab = "Event time k = year - G",
+      ylab = "ATT(k) relative to k = -1")
+```
+
+
+# 4. Illustration, no exercise here: How does TWFE break for DiD
+
+For a clean DiD interpretation, TWFE needs either constant treatment effects, or comparisons that use only untreated controls.
+
+# 4.1 Violation of constant treatment effects
+
+Below is a toy example where early adopters look increasingly different from their untreated counterfactual as time passes (i.e., treatment effect grows with the number of periods under treatment). This results in the comparison of late- to early-adopters recovering a large negative effect, even when the treatment effect is actually positive.
+
+
+```{r}
+set.seed(123)
+
+# Toy panel: three groups (early, late, never), simple dynamic effects for early
+Tt <- 8
+did_stag <- expand.grid(id = 1:90, t = 1:Tt) %>%
+  mutate(group = case_when(
+    id <= 30 ~ "early",
+    id <= 60 ~ "late",
+    TRUE     ~ "never"
+  ),
+  G = case_when(
+    group == "early" ~ 3,
+    group == "late"  ~ 6,
+    TRUE             ~ Inf
+  ),
+  D = as.integer(t >= G),
+  # Dynamic effects: early effect grows after treatment; late effect smaller/flat
+  te = case_when(
+    group == "early" & is.finite(G) & t >= G ~ 0.2 * (t - G + 1),
+    group == "late"  & is.finite(G) & t >= G ~ 0.3,
+    TRUE ~ 0
+  ),
+  # outcome with unit FE + time FE + treatment effect
+  alpha_i = rep(rnorm(90, 0, 1), each = Tt),
+  lambda_t = rep(rnorm(Tt, 0, 0.5), times = 90),
+  eps = rnorm(n(), 0, 0.5),
+  Y = alpha_i + lambda_t + te + eps
+  )
+
+# TWFE
+fit_twfe <- lm(Y ~ D + factor(id) + factor(t), data = did_stag)
+tau_twfe <- coef(fit_twfe)[["D"]]
+
+did_2x2 <- function(df, g_treat, g_ctrl, pre_t, post_t) {
+  yt_pre  <- mean(df$Y[df$group == g_treat & df$t %in% pre_t])
+  yt_post <- mean(df$Y[df$group == g_treat & df$t %in% post_t])
+  yc_pre  <- mean(df$Y[df$group == g_ctrl  & df$t %in% pre_t])
+  yc_post <- mean(df$Y[df$group == g_ctrl  & df$t %in% post_t])
+  (yt_post - yt_pre) - (yc_post - yc_pre)
+}
+
+g_vals  <- sort(unique(did_stag$G[is.finite(did_stag$G)]))
+g_early <- g_vals[1]
+g_late  <- g_vals[2]
+t_vals  <- sort(unique(did_stag$t))
+
+est_e_never <- did_2x2(did_stag, "early", "never",
+                      pre_t  = t_vals[t_vals < g_early],
+                      post_t = t_vals[t_vals >= g_early])
+
+est_l_never <- did_2x2(did_stag, "late", "never",
+                      pre_t  = t_vals[t_vals < g_late],
+                      post_t = t_vals[t_vals >= g_late])
+
+est_e_l_notyet <- did_2x2(did_stag, "early", "late",
+                         pre_t  = t_vals[t_vals < g_early],
+                         post_t = t_vals[t_vals >= g_early & t_vals < g_late])
+
+est_l_e_already <- did_2x2(did_stag, "late", "early",
+                          pre_t  = t_vals[t_vals >= g_early & t_vals < g_late],
+                          post_t = t_vals[t_vals >= g_late])
+
+df_comp <- tibble(
+  comparison = c("Early vs never (clean)",
+                 "Late vs never (clean)",
+                 "Early vs late (late not yet)",
+                 "Late vs early (early already)"),
+  est = c(est_e_never, est_l_never, est_e_l_notyet, est_l_e_already),
+  type = c("clean","clean","not_yet","already")
+)
+
+ggplot(df_comp, aes(x = reorder(comparison, est), y = est, fill = type)) +
+  geom_hline(yintercept = 0, linewidth = 0.4) +
+  geom_hline(yintercept = tau_twfe, linewidth = 0.8, linetype = 3) +
+  geom_col(width = 0.75) +
+  coord_flip() +
+  labs(x = NULL, y = "2×2 DiD estimate",
+       title = "TWFE (dashed) implicitly averages multiple 2×2 DiDs",
+       subtitle = "The 'forbidden' comparison uses already-treated units as controls") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+## 4.2 Who is in the control group each time?
+
+Without grouping the units into three cohorts (early, late, and never), the plot below shows how the proportion of treated, not yet treated, and never treated units change as the years go by.
+
+You can observe that when later-adopters receive treatment, there will be a lot more already treated units than when earlier-adopters were treated. This means the problem of TWFE comparing later-adopters to earlier-adopters becomes more problematic as time goes by (provided there are no treatment reversals).
+
+
+```{r}
+u <- union_sa |>
+  mutate(
+    status = case_when(
+      !is.finite(G) ~ "never treated",
+      year < G      ~ "not yet treated",
+      year >= G     ~ "already treated"
+    )
+  )
+
+u |>
+  group_by(year, status) |>
+  summarise(n = n(), .groups="drop") |>
+  group_by(year) |>
+  mutate(share = n / sum(n)) |>
+  ggplot(aes(x = year, y = share, fill = status)) +
+  geom_area() +
+  labs(x=NULL, y="Share of observations") +
+  theme_bw()
+```
+
