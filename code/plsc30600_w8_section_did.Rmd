@@ -1,6 +1,6 @@
 ---
 title: "Section W8 - DiD to TWFE"
-author: "Maggie X. Wang"
+author: "Your Name Here"
 date: "2026-02-26"
 output: html_document
 ---
@@ -16,10 +16,10 @@ library(panelView)
 # 0. Set-up
 
 ```{r}
-ck_url <- "https://YOUR_URL_HERE/minwage.csv"
-paglayan_url <- "https://YOUR_URL_HERE/Paglayan%20Dataset.dta"
+ck_url <- "https://github.com/UChicago-pol-methods/PLSC30600/blob/main/data/card-krueger.csv"
+paglayan_url <- "https://raw.githubusercontent.com/UChicago-pol-methods/PLSC30600/main/data/paglayan-2019.dta"
 
-minwage <- readr::read_csv(ck_url)
+minwage <- read_csv(ck_url)
 
 union <- haven::read_dta(paglayan_url) %>%
   filter(!is.na(studteachratio),
