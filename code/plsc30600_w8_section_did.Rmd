@@ -1,0 +1,187 @@
+---
+title: "Section W8 - DiD to TWFE"
+author: "Maggie X. Wang"
+date: "2026-02-26"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(fixest)
+library(panelView)
+```
+
+# 0. Set-up
+
+```{r}
+ck_url <- "https://YOUR_URL_HERE/minwage.csv"
+paglayan_url <- "https://YOUR_URL_HERE/Paglayan%20Dataset.dta"
+
+minwage <- readr::read_csv(ck_url)
+
+union <- haven::read_dta(paglayan_url) %>%
+  filter(!is.na(studteachratio),
+         State != "DC", State != "WI",
+         year > 1959, year < 1997)
+```
+
+# 1. Warm-Up: Card & Krueger (1994)
+
+Recall the context: New Jersey raised its minimum wage in April 1992; Pennsylvania did not. Card and Krueger surveyed fast-food restaurants *before* (Wave 1) and *after* (Wave 2) to see how the minimum wage raise affects full time employment (`EMPFT` for wave 1; `EMPFT2` for wave 2).
+
+## 1.1 What is in the naive DiD estimator?
+
+Recall:
+
+$$\tau_{DiD}\equiv\big(E[Y \mid G = 1, t = 1]-E[Y \mid G = 1, t = 0]\big)-\big(E[Y \mid G = 0, t = 1]-E[Y \mid G = 0, t = 0]\big)$$
+**What does each of the four expected value mean? What about the first difference and the second difference?**
+
+**What is the parallel trends assumption here?**
+
+# 1.2 Estimate TWFE  (`feols()`)
+
+Hint: you may need to restructure the data
+
+```{r}
+
+```
+
+# 1.3 Confirm TWFE matches DiD estimate
+
+Run the following code that calculates each component of the DiD equation separately to obtain the estimate. Make sure your TWFE results match.
+
+```{r}
+minwage %>%
+  pivot_longer(cols = c(EMPFT, EMPFT2),
+               names_to = "wave", values_to = "Y") %>%
+  mutate(time  = if_else(wave == "EMPFT", 0L, 1L),
+         treat = if_else(STATE == 1, "NJ (treated)", "PA (control)")) %>%
+  mutate(
+    G  = if_else(treat == "NJ (treated)", 1L, 0L),
+    D  = G * time,
+    id = rep(1:(nrow(minwage)), each = 2)
+  ) %>% 
+  group_by(treat, time) %>%
+  summarise(mean_Y = mean(Y, na.rm = TRUE), .groups = "drop") %>% 
+  pivot_wider(names_from = time, values_from = mean_Y,
+              names_prefix = "t") %>%
+  mutate(change = t1 - t0) %>% 
+  summarise(did =
+              change[treat == "NJ (treated)"] -
+              change[treat == "PA (control)"]) %>%
+  pull(did)
+```
+
+# 2. Staggered Adoption with Paglayan (2019)
+
+Paglayan (2019) studies whether laws requiring collective bargaining (`CBrequired_SY`) with teachers increase public education spending, as measured with logged per-pupil expenditures `lnppexpend`.
+
+Using staggered adoption of these laws across U.S. states, she applies a difference-in-differences design with state and year fixed effects to compare outcomes before and after adoption.
+
+**What is the parallel trends assumption here?**
+
+## 2.1 Visualize the staggered treatment timing using panelview()
+
+**What are the treatment cohorts (groups)?**
+
+```{r}
+
+```
+
+## 2.2 Estimate the naive TWFE using feols()
+
+```{r}
+
+
+```
+
+## 2.3 What are the hidden 2x2s?
+
+Below, I grouped treatment into two cohorts: early and late. Referencing slide 48 in Week 8's slides, we know that TWFE effectively combines multiple 2x2 DiD comparisons. In the case of two treatment cohorts, there are four:
+
++ Early vs never
++ Late vs never
++ Early vs late
++ Late vs early
+
+**In plain words, why can't we compare late vs. early?**
+
+Using the example of `est1` and the helper function, separate these four 2x2s. Compare them to the naive TWFE estimate.
+
+```{r}
+# Define early/late/never (coarse timing groups)
+median_yr <- median(union$YearCBrequired, na.rm = TRUE)
+
+union_gb <- union |>
+  mutate(group_label = case_when(
+    is.na(YearCBrequired)       ~ "never",
+    YearCBrequired <= median_yr ~ "early",
+    TRUE                        ~ "late"
+  ))
+
+all_yrs <- sort(unique(union_gb$year))
+
+# Pick a single "early adoption time" and "late adoption time" to anchor the periods
+g_early <- min(union_gb$YearCBrequired[union_gb$group_label == "early"], na.rm = TRUE)
+g_late  <- min(union_gb$YearCBrequired[union_gb$group_label == "late"],  na.rm = TRUE)
+```
+
+```{r}
+# Helper function to do individual 2x2s
+did_2x2 <- function(df, g_treat, g_ctrl, pre_t, post_t) {
+  yt_pre  <- mean(df$lnppexpend[df$group_label == g_treat & df$year %in% pre_t],  na.rm=TRUE)
+  yt_post <- mean(df$lnppexpend[df$group_label == g_treat & df$year %in% post_t], na.rm=TRUE)
+  yc_pre  <- mean(df$lnppexpend[df$group_label == g_ctrl  & df$year %in% pre_t],  na.rm=TRUE)
+  yc_post <- mean(df$lnppexpend[df$group_label == g_ctrl  & df$year %in% post_t], na.rm=TRUE)
+  (yt_post - yt_pre) - (yc_post - yc_pre)
+}
+```
+
+```{r}
+# Early vs never
+est1 <- did_2x2(union_gb, "early", "never",
+                pre_t  = all_yrs[all_yrs < g_early],
+                post_t = all_yrs[all_yrs >= g_early])
+
+# Late vs never
+est2 <- 
+
+# Early vs late 
+est3 <- 
+
+# Late vs early
+est4 <- 
+  
+```
+
+
+## 2.4 Illustration (no coding): TWFE is a weighted average of 2x2 comparisons
+
+```{r}
+#install.packages("bacondecomp")
+library(bacondecomp)
+
+bacon_results <- bacon(
+  lnppexpend ~ CBrequired_SY,
+  data = union,
+  id_var = "State",
+  time_var = "year"
+)
+
+head(bacon_results)
+
+weighted_avg <- sum(bacon_results$weight * bacon_results$estimate)
+weighted_avg #same as naive TWFE
+```
+
+
+## 2.5 Robust estimation with staggered adoption using sunab()
+
+Estimate a robust event study with k=-1 as the reference period and plot it. Hint: you may need to restructure the data.
+
+```{r}
+
+```
+
