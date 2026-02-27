@@ -16,7 +16,7 @@ library(panelView)
 # 0. Set-up
 
 ```{r}
-ck_url <- "https://github.com/UChicago-pol-methods/PLSC30600/blob/main/data/card-krueger.csv"
+ck_url <- "https://raw.githubusercontent.com/UChicago-pol-methods/PLSC30600/main/data/ck_minwage_did.csv"
 paglayan_url <- "https://raw.githubusercontent.com/UChicago-pol-methods/PLSC30600/main/data/paglayan-2019.dta"
 
 minwage <- read_csv(ck_url)
@@ -29,7 +29,7 @@ union <- haven::read_dta(paglayan_url) %>%
 
 # 1. Warm-Up: Card & Krueger (1994)
 
-Recall the context: New Jersey raised its minimum wage in April 1992; Pennsylvania did not. Card and Krueger surveyed fast-food restaurants *before* (Wave 1) and *after* (Wave 2) to see how the minimum wage raise affects full time employment (`EMPFT` for wave 1; `EMPFT2` for wave 2).
+Recall the context: New Jersey (`STATE==1`) raised its minimum wage in April 1992; Pennsylvania (`STATE==0`) did not. Card and Krueger surveyed fast-food restaurants *before* (Wave 1) and *after* (Wave 2) to see how the minimum wage raise affects full time employment (`EMPFT` for wave 1; `EMPFT2` for wave 2).
 
 ## 1.1 What is in the naive DiD estimator?
 
@@ -56,10 +56,10 @@ Run the following code that calculates each component of the DiD equation separa
 minwage %>%
   pivot_longer(cols = c(EMPFT, EMPFT2),
                names_to = "wave", values_to = "Y") %>%
-  mutate(time  = if_else(wave == "EMPFT", 0L, 1L),
+  mutate(time  = if_else(wave == "EMPFT", 0, 1),
          treat = if_else(STATE == 1, "NJ (treated)", "PA (control)")) %>%
   mutate(
-    G  = if_else(treat == "NJ (treated)", 1L, 0L),
+    G  = if_else(treat == "NJ (treated)", 1, 0),
     D  = G * time,
     id = rep(1:(nrow(minwage)), each = 2)
   ) %>% 
